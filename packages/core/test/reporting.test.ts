@@ -8,7 +8,7 @@ function execution(exitCode: number, output = "", environment: Record<string, st
 }
 
 describe("GitHub compatibility reporting", () => {
-  it("renders deterministic matrix, runtime, clusters, artifacts, confidence, and analysis", () => {
+  it("renders deterministic matrix, runtime, clusters, linked artifacts, confidence, and analysis", () => {
     const comparison: Comparison = {
       downstream: { repository: "org/consumer", ref: "abc123", ecosystem: "npm" },
       classification: "newly-broken",
@@ -17,7 +17,15 @@ describe("GitHub compatibility reporting", () => {
       candidate: execution(1, "TypeError: removed API", { node: "24.1.0" }),
       candidateSignature: "deadbeefdeadbeef",
       cluster: { id: "cluster-123", fingerprint: "deadbeefdeadbeef", label: "TypeError: removed API", members: 2 },
-      artifacts: [{ kind: "candidate-log", path: "run/consumer/candidate.log", sha256: "a".repeat(64), bytes: 42 }],
+      artifacts: [
+        {
+          kind: "candidate-log",
+          path: "run/consumer/candidate.log",
+          url: "https://ci.example.test/api/artifacts/run/consumer/candidate.log",
+          sha256: "a".repeat(64),
+          bytes: 42,
+        },
+      ],
       analysis: { harness: "codex", label: "ANALYSIS", raw: "Likely upstream regression based on the supplied diff." },
       reason: "The downstream passes baseline and fails only with the candidate.",
     };
@@ -25,7 +33,7 @@ describe("GitHub compatibility reporting", () => {
     expect(output.text).toContain("Deterministic compatibility matrix");
     expect(output.text).toContain("99%");
     expect(output.text).toContain("cluster-123");
-    expect(output.text).toContain("candidate.log");
+    expect(output.text).toContain("[candidate-log](https://ci.example.test/api/artifacts/run/consumer/candidate.log)");
     expect(output.text).toContain('"node": "24.1.0"');
     expect(output.text).toContain("ANALYSIS (codex)");
   });
