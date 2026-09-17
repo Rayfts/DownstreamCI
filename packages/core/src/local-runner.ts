@@ -92,7 +92,15 @@ async function probeRuntime(
   const unknown = requested.filter((key) => !commands[key]);
   if (unknown.length) throw new Error(`Unsupported runtime keys: ${unknown.join(", ")}. Supported keys: node, python, rust, go.`);
   const command = requested.map((key) => `printf '${key}='; ${commands[key]}`).join("; ");
-  const result = await runInDocker({ image, workspace, command, network: "none", resources, mounts, kind: "setup" });
+  const result = await runInDocker({
+    image,
+    workspace,
+    command,
+    network: "none",
+    ...(resources ? { resources } : {}),
+    mounts,
+    kind: "setup",
+  });
   if (result.exitCode !== 0) return { environment: {}, failure: result };
   const environment = Object.fromEntries(
     result.stdout.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
