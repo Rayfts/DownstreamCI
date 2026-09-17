@@ -25,4 +25,10 @@ Per-failure analysis receives bounded upstream diff text, candidate metadata, ba
 
 DownstreamCI also exposes optional **semantic cluster analysis** over the already-deterministic failure clusters. The agent receives immutable cluster IDs and bounded/redacted evidence, and may suggest higher-level semantic families. This output remains `ANALYSIS`; it cannot merge deterministic clusters or change classifications, confidence, Check conclusions, or release-blocking facts.
 
+## Harness environment isolation
+
+Agent processes do not inherit the worker's complete environment or its normal user configuration. Each invocation gets a fresh temporary HOME/USERPROFILE/XDG config/cache/temp layout and a minimal platform environment. Supported model-provider credentials and settings are copied explicitly; additional harmless variables may be opted in with `DOWNSTREAMCI_AGENT_ENV_ALLOWLIST`.
+
+Control-plane and infrastructure credentials remain blocked from agent subprocesses. Variables under `DOWNSTREAMCI_*`, `GITHUB_*`, `GH_TOKEN`, `AWS_*`, and password/private-key/secret-shaped names are not forwarded through the allowlist. This separation is independent of prompt redaction: secrets should not enter the harness environment in the first place.
+
 Provider/harness authentication remains the operator's responsibility. Analysis is optional; the deterministic comparison works without any coding agent.
