@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
@@ -8,6 +8,7 @@ import {
   DockerPairRunner,
   RunStore,
   analyzeFailure,
+  analyzeFailureClusters,
   cloneDownstream,
   clusterComparisons,
   detectEcosystem,
@@ -87,11 +88,29 @@ program
 
     const runId = randomUUID();
     const clustered = clusterComparisons(comparisons);
-    const finalComparisons = await writeRunArtifacts(
-      resolve(upstream, ".downstreamci/artifacts"),
-      runId,
-      clustered,
-    );
+    let semanticClustering: { harness: string; raw: string; label: "ANALYSIS" } | undefined;
+    if (options.harness && clustered.some((comparison) => comparison.classification === "newly-broken")) {
+      try {
+        semanticClustering = await analyzeFailureClusters(options.harness, clustered);
+      } catch {
+        semanticClustering = {
+          harness: options.harness,
+          label: "ANALYSIS",
+          raw: "Semantic cluster analysis was unavailable. Deterministic cluster IDs and CI classifications are unchanged.",
+        };
+      }
+    }
+
+    const evidenceRoot = resolve(upstream, ".downstreamci/artifacts");
+    const finalComparisons = await writeRunArtifacts(evidenceRoot, runId, clustered);
+    if (semanticClustering && options.harness) {
+      await writeFile(
+        resolve(evidenceRoot, runId, `semantic-clusters-${options.harness}.txt`),
+        `${semanticClustering.raw}\n`,
+        { mode: 0o600 },
+      );
+    }
+
     const store = new RunStore(resolve(upstream, ".downstreamci/downstreamci.db"));
     try {
       store.save(runId, upstream, await currentRef(upstream), finalComparisons);
@@ -101,14 +120,18 @@ program
 
     const summary = summarizeComparisons(finalComparisons);
     if (options.json) {
-      console.log(JSON.stringify({ runId, summary, comparisons: finalComparisons }, null, 2));
+      console.log(JSON.stringify({ runId, summary, comparisons: finalComparisons, semanticClustering }, null, 2));
     } else {
       for (const comparison of finalComparisons) printComparison(comparison);
       console.log(`\nRun ${runId}`);
       console.log(`${summary.title}: ${summary.summary || "no downstreams"}`);
-      console.log(`Evidence: ${resolve(upstream, ".downstreamci/artifacts", runId)}`);
+      if (semanticClustering) {
+        console.log(`\nANALYSIS semantic clustering (${semanticClustering.harness}):`);
+        console.log(semanticClustering.raw.slice(0, 1_200));
+      }
+      console.log(`Evidence: ${resolve(evidenceRoot, runId)}`);
     }
-    if ((summary.counts["newly-broken"] ?? 0) > 0) process.exitCode = 2;
+    process.exitCode = conclusionExitCode(summary.conclusion);
   });
 
 program.command("doctor").description("check local prerequisites").action(async () => {
@@ -137,6 +160,8 @@ program.command("capabilities").argument("<harness>").action((id: string) => {
         upstream: harness.upstream,
         automated: harness.automated,
         structuredOutput: harness.structuredOutput,
+        verifiedAt: harness.verifiedAt,
+        evidence: harness.evidence,
         notes: harness.notes,
       },
       null,
@@ -184,7 +209,7 @@ program
       new DockerPairRunner({ candidate, adapter, image: options.runnerImage, retries: 2 }),
     );
     console.log(JSON.stringify(result, null, 2));
-    if (result.classification === "newly-broken") process.exitCode = 2;
+    process.exitCode = conclusionExitCode(summarizeComparisons([result]).conclusion);
   });
 
 program.command("compare").argument("<run-id>").option("--path <path>", "upstream repository", ".").action(
@@ -253,6 +278,14 @@ interface SingleOptions {
 }
 
 type DockerRunner = DockerPairRunner;
+
+type Conclusion = "success" | "failure" | "neutral";
+
+function conclusionExitCode(conclusion: Conclusion): 0 | 2 | 3 {
+  if (conclusion === "failure") return 2;
+  if (conclusion === "neutral") return 3;
+  return 0;
+}
 
 async function discoverOnGitHub(candidate: CandidateArtifact, limit: number): Promise<RankedDiscoveryCandidate[]> {
   const filename =
