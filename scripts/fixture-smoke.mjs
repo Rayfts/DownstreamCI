@@ -1,7 +1,7 @@
-import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { spawn } from "node:child_process";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const temp = await mkdtemp(join(tmpdir(), "downstreamci-fixture-"));
@@ -31,14 +31,20 @@ async function exercise(name, candidateTarball) {
   const source = join(root, "fixtures/npm", name);
   const target = join(temp, name);
   await cp(source, target, { recursive: true });
-  await cp(join(root, "fixtures/npm/published-upstream"), join(temp, "published-upstream"), { recursive: true });
+  await cp(join(root, "fixtures/npm/published-upstream"), join(temp, "published-upstream"), {
+    recursive: true,
+  });
 
   let result = await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"], target);
   assert(result.code === 0, `${name} baseline install failed: ${result.stderr}`);
   result = await run("npm", ["test"], target);
   const baseline = result.code;
 
-  result = await run("npm", ["install", "--no-save", "--ignore-scripts", "--no-audit", "--no-fund", candidateTarball], target);
+  result = await run(
+    "npm",
+    ["install", "--no-save", "--ignore-scripts", "--no-audit", "--no-fund", candidateTarball],
+    target,
+  );
   assert(result.code === 0, `${name} candidate injection failed: ${result.stderr}`);
   result = await run("npm", ["test"], target);
   return { baseline, candidate: result.code };
@@ -51,8 +57,12 @@ function run(command, args, cwd) {
     let stderr = "";
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (value) => { stdout += value; });
-    child.stderr.on("data", (value) => { stderr += value; });
+    child.stdout.on("data", (value) => {
+      stdout += value;
+    });
+    child.stderr.on("data", (value) => {
+      stderr += value;
+    });
     child.on("error", reject);
     child.on("close", (code) => resolvePromise({ code, stdout, stderr }));
   });
