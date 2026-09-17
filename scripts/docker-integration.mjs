@@ -12,40 +12,47 @@ const root = await mkdtemp(join(tmpdir(), "downstreamci-docker-integration-"));
 try {
   const upstream = join(root, "upstream");
   const downstream = join(root, "downstream");
+  const baselineUpstream = join(downstream, "baseline-upstream");
   await mkdir(upstream, { recursive: true });
-  await mkdir(join(downstream, "vendor", "upstream"), { recursive: true });
+  await mkdir(baselineUpstream, { recursive: true });
 
   await writeFile(join(upstream, "go.mod"), "module example.com/upstream\n\ngo 1.22\n");
   await writeFile(join(upstream, "upstream.go"), "package upstream\n\nfunc Value() int { return 2 }\n");
 
-  await writeFile(join(downstream, "go.mod"), [
-    "module example.com/downstream",
-    "",
-    "go 1.22",
-    "",
-    "require example.com/upstream v0.0.0",
-    "",
-    "replace example.com/upstream => ./vendor/upstream",
-    "",
-  ].join("\n"));
+  await writeFile(
+    join(downstream, "go.mod"),
+    [
+      "module example.com/downstream",
+      "",
+      "go 1.22",
+      "",
+      "require example.com/upstream v0.0.0",
+      "",
+      "replace example.com/upstream => ./baseline-upstream",
+      "",
+    ].join("\n"),
+  );
   await writeFile(join(downstream, "placeholder.go"), "package downstream\n");
-  await writeFile(join(downstream, "main_test.go"), [
-    "package downstream",
-    "",
-    "import (",
-    '  "testing"',
-    '  upstream "example.com/upstream"',
-    ")",
-    "",
-    "func TestCompatibility(t *testing.T) {",
-    "  if got := upstream.Value(); got != 1 {",
-    '    t.Fatalf("expected baseline API value 1, got %d", got)',
-    "  }",
-    "}",
-    "",
-  ].join("\n"));
-  await writeFile(join(downstream, "vendor", "upstream", "go.mod"), "module example.com/upstream\n\ngo 1.22\n");
-  await writeFile(join(downstream, "vendor", "upstream", "upstream.go"), "package upstream\n\nfunc Value() int { return 1 }\n");
+  await writeFile(
+    join(downstream, "main_test.go"),
+    [
+      "package downstream",
+      "",
+      "import (",
+      '  "testing"',
+      '  upstream "example.com/upstream"',
+      ")",
+      "",
+      "func TestCompatibility(t *testing.T) {",
+      "  if got := upstream.Value(); got != 1 {",
+      '    t.Fatalf("expected baseline API value 1, got %d", got)',
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  await writeFile(join(baselineUpstream, "go.mod"), "module example.com/upstream\n\ngo 1.22\n");
+  await writeFile(join(baselineUpstream, "upstream.go"), "package upstream\n\nfunc Value() int { return 1 }\n");
 
   await git(downstream, ["init", "--quiet"]);
   await git(downstream, ["config", "user.name", "DownstreamCI Fixture"]);
@@ -90,5 +97,8 @@ try {
 }
 
 async function git(cwd, args) {
-  return exec("git", args, { cwd, env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" } });
+  return exec("git", args, {
+    cwd,
+    env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" },
+  });
 }
