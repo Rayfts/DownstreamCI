@@ -1,6 +1,7 @@
 import type { EcosystemAdapter } from "./ecosystems.js";
 import type { PairRunner } from "./engine.js";
 import { runInDocker, startServiceStack, type SandboxMount, type ServiceStack } from "./sandbox.js";
+import { createCandidateSnapshot, type CandidateSnapshot } from "./snapshot.js";
 import type { CandidateArtifact, CommandResult, DownstreamSpec, Execution } from "./types.js";
 
 export interface LocalRunnerOptions {
@@ -33,11 +34,14 @@ export class DockerPairRunner implements PairRunner {
     const resourceTimeout = spec.timeoutSeconds ?? spec.resources?.timeoutSeconds;
     const resources = { ...spec.resources, ...(resourceTimeout ? { timeoutSeconds: resourceTimeout } : {}) };
     const image = this.options.image ?? "downstreamci/runner:local";
-    const mounts: SandboxMount[] = candidate
-      ? [{ source: this.options.candidate.path, target: "/candidate", readOnly: true }]
-      : [];
     let services: ServiceStack | undefined;
+    let candidateSnapshot: CandidateSnapshot | undefined;
+    let mounts: SandboxMount[] = [];
     try {
+      if (candidate) {
+        candidateSnapshot = await createCandidateSnapshot(this.options.candidate.path);
+        mounts = [{ source: candidateSnapshot.path, target: "/candidate", readOnly: true }];
+      }
       if (spec.services?.length) {
         services = await startServiceStack(spec.services, { allowInternet: spec.network?.mode === "bridge" });
       }
@@ -85,6 +89,7 @@ export class DockerPairRunner implements PairRunner {
       return failedSetup(serviceSetupFailure(error), {});
     } finally {
       await services?.cleanup();
+      await candidateSnapshot?.cleanup();
     }
   }
 }
