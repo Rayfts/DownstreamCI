@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, "build/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: corepack enable
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm fixtures:test
+      - run: pnpm lint
+      - run: pnpm build
+
+  runner-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t downstreamci/runner:ci containers/runner
+      - run: docker run --rm downstreamci/runner:ci node --version
+      - run: docker run --rm downstreamci/runner:ci python --version
+      - run: docker run --rm downstreamci/runner:ci cargo --version
+      - run: docker run --rm downstreamci/runner:ci go version
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm audit --prod --audit-level high
+      - name: Ensure no obvious private keys are committed
+        run: '! grep -R --exclude-dir=.git --exclude=ci.yml -E "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY" .'
