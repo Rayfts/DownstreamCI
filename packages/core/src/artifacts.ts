@@ -5,12 +5,14 @@ import { sanitizeLog } from "./reporting.js";
 import type { ArtifactReference, Comparison, Execution } from "./types.js";
 
 const MAX_ARTIFACT_LOG_CHARS = 4 * 1024 * 1024;
+const ARTIFACT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 export async function writeRunArtifacts(
   root: string,
   runId: string,
   comparisons: Comparison[],
 ): Promise<Comparison[]> {
+  if (!ARTIFACT_ID.test(runId)) throw new Error("Invalid artifact run ID");
   const runDirectory = join(root, runId);
   await mkdir(runDirectory, { recursive: true, mode: 0o700 });
   const enriched: Comparison[] = [];
