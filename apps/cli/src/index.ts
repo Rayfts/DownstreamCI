@@ -61,17 +61,14 @@ program
       const comparison = await runComparison(spec, runner);
       if (options.harness && comparison.classification === "newly-broken") {
         try {
-          comparison.analysis = await analyzeFailure(
-            options.harness,
-            {
-              upstreamDiff,
-              candidateMetadata: { ...candidate.metadata, identity: candidate.identity, ecosystem: candidate.ecosystem },
-              baselineLog: combinedLog(comparison.baseline.test),
-              candidateLog: combinedLog(comparison.candidate.test),
-              dependencyManifest: `Downstream: ${spec.repository}@${spec.ref}. The sandbox checkout is intentionally disposable.`,
-              runtime: comparison.candidate.environment,
-            },
-          );
+          comparison.analysis = await analyzeFailure(options.harness, {
+            upstreamDiff,
+            candidateMetadata: { ...candidate.metadata, identity: candidate.identity, ecosystem: candidate.ecosystem },
+            baselineLog: combinedLog(comparison.baseline.test),
+            candidateLog: combinedLog(comparison.candidate.test),
+            dependencyManifest: `Downstream: ${spec.repository}@${spec.ref}. The sandbox checkout is intentionally disposable.`,
+            runtime: comparison.candidate.environment,
+          });
         } catch (error) {
           comparison.analysis = {
             harness: options.harness,
@@ -234,16 +231,28 @@ interface DiscoverySuggestion {
 }
 
 async function discoverOnGitHub(candidate: CandidateArtifact, limit: number): Promise<DiscoverySuggestion[]> {
-  const filename = candidate.ecosystem === "npm" ? "package.json" : candidate.ecosystem === "python" ? "pyproject.toml" : candidate.ecosystem === "cargo" ? "Cargo.toml" : "go.mod";
-  const query = `\"${candidate.identity}\" filename:${filename}`;
+  const filename =
+    candidate.ecosystem === "npm"
+      ? "package.json"
+      : candidate.ecosystem === "python"
+        ? "pyproject.toml"
+        : candidate.ecosystem === "cargo"
+          ? "Cargo.toml"
+          : "go.mod";
+  const query = `"${candidate.identity}" filename:${filename}`;
   const url = new URL("https://api.github.com/search/code");
   url.searchParams.set("q", query);
   url.searchParams.set("per_page", String(Math.min(limit, 100)));
-  const headers: Record<string, string> = { Accept: "application/vnd.github+json", "User-Agent": "DownstreamCI/0.1" };
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "DownstreamCI/0.1",
+  };
   if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
   const response = await fetch(url, { headers });
   if (!response.ok) throw new Error(`GitHub discovery failed (${response.status}): ${await response.text()}`);
-  const payload = await response.json() as { items?: Array<{ repository?: { full_name?: string; html_url?: string } }> };
+  const payload = (await response.json()) as {
+    items?: Array<{ repository?: { full_name?: string; html_url?: string } }>;
+  };
   const unique = new Map<string, DiscoverySuggestion>();
   for (const item of payload.items ?? []) {
     const repository = item.repository?.full_name;
@@ -262,7 +271,9 @@ function parsePositiveInt(value: string): number {
 
 async function resolveAdapter(upstream: string, config: DownstreamConfig): Promise<EcosystemAdapter> {
   const explicit = new Set(config.downstreams.map((item) => item.ecosystem).filter((item) => item !== "auto"));
-  if (explicit.size > 1) throw new Error(`One upstream package cannot use multiple ecosystem adapters: ${[...explicit].join(", ")}`);
+  if (explicit.size > 1) {
+    throw new Error(`One upstream package cannot use multiple ecosystem adapters: ${[...explicit].join(", ")}`);
+  }
   const id = [...explicit][0];
   return id ? ecosystemAdapter(id) : detectEcosystem(upstream);
 }
@@ -310,7 +321,9 @@ function combinedLog(result: { stderr: string; stdout: string }): string {
 function printComparison(comparison: Comparison): void {
   const name = comparison.downstream?.repository ?? "downstream";
   console.log(`${comparison.classification.padEnd(23)} ${name}`);
-  if (comparison.analysis) console.log(`  ANALYSIS (${comparison.analysis.harness}): ${comparison.analysis.raw.slice(0, 500)}`);
+  if (comparison.analysis) {
+    console.log(`  ANALYSIS (${comparison.analysis.harness}): ${comparison.analysis.raw.slice(0, 500)}`);
+  }
 }
 
 async function fileExists(path: string): Promise<boolean> {

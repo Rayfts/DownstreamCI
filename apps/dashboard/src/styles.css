@@ -28,7 +28,7 @@ th { color: #687083; font-weight: 600; }
 td small { display: block; margin-top: 4px; }
 .stack { display: grid; gap: 12px; }
 .panel p { color: #596174; line-height: 1.55; font-size: 14px; }
-.analysis { font: 700 11px ui-monospace, monospace; letter-spacing: .12em; color: #111318 !important; }
+.panel .analysis { font: 700 11px ui-monospace, monospace; letter-spacing: .12em; color: #111318; }
 .loggrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 pre { overflow: auto; max-height: 430px; padding: 14px; background: #f6f7f9; border-radius: 10px; font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .error { border-color: #b84c4c; }

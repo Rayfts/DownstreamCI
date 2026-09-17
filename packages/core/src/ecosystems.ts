@@ -96,7 +96,7 @@ export const cargoAdapter: EcosystemAdapter = {
     };
   },
   async injectionCommands(candidate, mountedCandidatePath = "/candidate") {
-    const entry = `\"${candidate.identity.replaceAll('"', '\\"')}\" = { path = \"${mountedCandidatePath.replaceAll('"', '\\"')}\" }`;
+    const entry = `${candidate.identity} = { path = ${JSON.stringify(mountedCandidatePath)} }`;
     const script = [
       "from pathlib import Path",
       "import re",
@@ -112,7 +112,7 @@ export const cargoAdapter: EcosystemAdapter = {
       "    match = re.search(r'\\n\\[', s[start:])",
       "    end = start + (match.start() if match else len(s) - start)",
       "    section = s[start:end]",
-      "    pattern = r'(?m)^\\s*[\"\\\']?' + re.escape(name) + r'[\"\\\']?\\s*=.*$'",
+      "    pattern = r'(?m)^\\s*' + re.escape(name) + r'\\s*=.*$'",
       "    if re.search(pattern, section):",
       "        section = re.sub(pattern, entry, section)",
       "    else:",
@@ -120,10 +120,7 @@ export const cargoAdapter: EcosystemAdapter = {
       "    s = s[:start] + section + s[end:]",
       "p.write_text(s)",
     ].join("\n");
-    return [
-      `python -c ${shell(script)}`,
-      `cargo update -p ${shell(candidate.identity)} --offline`,
-    ];
+    return [`python -c ${shell(script)}`, `cargo update -p ${shell(candidate.identity)} --offline`];
   },
 };
 

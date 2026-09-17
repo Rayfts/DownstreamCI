@@ -59,11 +59,16 @@ export function githubCheckOutput(comparisons: Comparison[]): { title: string; s
         )
         .join("\n\n")
     : "Baseline/candidate comparison found no candidate-only failures.";
-  return { title: summary.title.slice(0, 255), summary: summary.summary.slice(0, 65_535), text: text.slice(0, 60_000) };
+  return {
+    title: summary.title.slice(0, 255),
+    summary: summary.summary.slice(0, 65_535),
+    text: text.slice(0, 60_000),
+  };
 }
 
 export function sanitizeLog(value: string, maxChars = 8_000): string {
-  const withoutAnsi = value.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
+  const ansiPattern = new RegExp("\\u001B\\[[0-?]*[ -/]*[@-~]", "g");
+  const withoutAnsi = value.replace(ansiPattern, "");
   const redacted = withoutAnsi
     .replace(/\b(gh[pousr]_[A-Za-z0-9_]{20,})\b/g, "<redacted-github-token>")
     .replace(/\b(sk-[A-Za-z0-9_-]{20,})\b/g, "<redacted-api-key>")
