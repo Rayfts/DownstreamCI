@@ -15,15 +15,18 @@ import {
   getHarness,
   harnesses,
   loadConfig,
+  rankDiscoveryCandidates,
   runComparison,
   runProcess,
   summarizeComparisons,
   writeRunArtifacts,
   type CandidateArtifact,
   type Comparison,
+  type DiscoveryCandidate,
   type DownstreamConfig,
   type DownstreamSpec,
   type EcosystemAdapter,
+  type RankedDiscoveryCandidate,
 } from "@downstreamci/core";
 
 const program = new Command()
@@ -37,7 +40,7 @@ program
   .option("--config <path>", "config file", ".downstreamci.yml")
   .option("--harness <id>", "agent harness for candidate-only failure analysis")
   .option("--runner-image <image>", "sandbox image", "downstreamci/runner:local")
-  .option("--retries <count>", "test attempts used for flake detection", parsePositiveInt, 2)
+  .option("--retries <count>", "test attempts used for flake detection", parseRetryCount, 2)
   .option("--json", "emit the machine-readable run result")
   .action(async (path: string, options: RunOptions) => {
     const upstream = resolve(path);
@@ -201,7 +204,7 @@ program
   .command("signals")
   .description("summarize repeated regressions, flaky downstreams, clusters, ecosystems, and runtimes")
   .option("--path <path>", "upstream repository", ".")
-  .option("--limit <count>", "recent runs to inspect", parsePositiveInt, 100)
+  .option("--limit <count>", "recent runs to inspect", parseLimit, 100)
   .action((options: { path: string; limit: number }) => {
     const store = new RunStore(resolve(options.path, ".downstreamci/downstreamci.db"));
     try {
@@ -214,8 +217,8 @@ program
 program
   .command("discover")
   .argument("[path]", "upstream repository", ".")
-  .description("suggest downstream repositories using GitHub code search")
-  .option("--limit <count>", "maximum suggestions", parsePositiveInt, 20)
+  .description("suggest and rank downstream repositories using GitHub dependency evidence")
+  .option("--limit <count>", "maximum suggestions", parseLimit, 20)
   .option("--json", "emit machine-readable suggestions")
   .action(async (path: string, options: { limit: number; json?: boolean }) => {
     const upstream = resolve(path);
@@ -227,8 +230,11 @@ program
       return;
     }
     console.log(`Suggested downstreams referencing ${candidate.identity}:`);
-    for (const item of suggestions) console.log(`- ${item.repository}  ${item.url}`);
-    console.log("\nSuggestions are non-blocking until a maintainer pins and adds them to .downstreamci.yml.");
+    for (const item of suggestions) {
+      const updated = item.pushedAt ? item.pushedAt.slice(0, 10) : "unknown";
+      console.log(`- ${item.score.toFixed(1).padStart(5)}  ${String(item.stars).padStart(6)} stars  ${item.repository}  updated ${updated}`);
+    }
+    console.log("\nRanking is suggestion-only. Pin and review a repository before adding it to .downstreamci.yml.");
   });
 
 await program.parseAsync();
@@ -248,12 +254,7 @@ interface SingleOptions {
 
 type DockerRunner = DockerPairRunner;
 
-interface DiscoverySuggestion {
-  repository: string;
-  url: string;
-}
-
-async function discoverOnGitHub(candidate: CandidateArtifact, limit: number): Promise<DiscoverySuggestion[]> {
+async function discoverOnGitHub(candidate: CandidateArtifact, limit: number): Promise<RankedDiscoveryCandidate[]> {
   const filename =
     candidate.ecosystem === "npm"
       ? "package.json"
@@ -265,30 +266,77 @@ async function discoverOnGitHub(candidate: CandidateArtifact, limit: number): Pr
   const query = `"${candidate.identity}" filename:${filename}`;
   const url = new URL("https://api.github.com/search/code");
   url.searchParams.set("q", query);
-  url.searchParams.set("per_page", String(Math.min(limit, 100)));
-  const headers: Record<string, string> = {
-    Accept: "application/vnd.github+json",
-    "User-Agent": "DownstreamCI/0.1",
-  };
-  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  url.searchParams.set("per_page", String(Math.min(100, Math.max(limit, limit * 3))));
+  const headers = githubHeaders();
   const response = await fetch(url, { headers });
   if (!response.ok) throw new Error(`GitHub discovery failed (${response.status}): ${await response.text()}`);
   const payload = (await response.json()) as {
     items?: Array<{ repository?: { full_name?: string; html_url?: string } }>;
   };
-  const unique = new Map<string, DiscoverySuggestion>();
+  const repositories = new Map<string, string>();
   for (const item of payload.items ?? []) {
     const repository = item.repository?.full_name;
-    const url = item.repository?.html_url;
-    if (repository && url && !unique.has(repository)) unique.set(repository, { repository, url });
-    if (unique.size >= limit) break;
+    const repositoryUrl = item.repository?.html_url;
+    if (repository && repositoryUrl && !repositories.has(repository)) repositories.set(repository, repositoryUrl);
   }
-  return [...unique.values()];
+
+  const candidates = await Promise.all(
+    [...repositories.entries()].map(([repository, repositoryUrl]) => hydrateRepository(repository, repositoryUrl, headers)),
+  );
+  return rankDiscoveryCandidates(candidates).slice(0, limit);
 }
 
-function parsePositiveInt(value: string): number {
+async function hydrateRepository(
+  repository: string,
+  repositoryUrl: string,
+  headers: Record<string, string>,
+): Promise<DiscoveryCandidate> {
+  const response = await fetch(`https://api.github.com/repos/${repository}`, { headers });
+  if (!response.ok) {
+    return { repository, url: repositoryUrl, stars: 0, forks: 0, archived: false, isFork: false };
+  }
+  const data = (await response.json()) as {
+    html_url?: string;
+    stargazers_count?: number;
+    forks_count?: number;
+    archived?: boolean;
+    fork?: boolean;
+    pushed_at?: string | null;
+  };
+  return {
+    repository,
+    url: data.html_url ?? repositoryUrl,
+    stars: data.stargazers_count ?? 0,
+    forks: data.forks_count ?? 0,
+    archived: data.archived ?? false,
+    isFork: data.fork ?? false,
+    ...(data.pushed_at ? { pushedAt: data.pushed_at } : {}),
+  };
+}
+
+function githubHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "DownstreamCI/0.1",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  return headers;
+}
+
+function parseRetryCount(value: string): number {
+  return parseBoundedInt(value, 1, 10, "retries");
+}
+
+function parseLimit(value: string): number {
+  return parseBoundedInt(value, 1, 100, "limit");
+}
+
+function parseBoundedInt(value: string, min: number, max: number, label: string): number {
   const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) throw new Error("value must be an integer from 1 to 100");
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    throw new Error(`${label} must be an integer from ${min} to ${max}`);
+  }
   return parsed;
 }
 
@@ -346,6 +394,7 @@ function printComparison(comparison: Comparison): void {
   const confidence = comparison.confidence === undefined ? "" : ` ${(comparison.confidence * 100).toFixed(0)}%`;
   const cluster = comparison.cluster ? ` ${comparison.cluster.id}` : "";
   console.log(`${comparison.classification.padEnd(23)} ${name}${confidence}${cluster}`);
+  if (comparison.expectedFlakeMatch) console.log(`  expected flake: ${comparison.expectedFlakeMatch}`);
   if (comparison.analysis) {
     console.log(`  ANALYSIS (${comparison.analysis.harness}): ${comparison.analysis.raw.slice(0, 500)}`);
   }
