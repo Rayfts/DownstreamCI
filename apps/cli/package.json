@@ -1,6 +1,8 @@
 {
   "name": "@downstreamci/cli",
   "version": "0.1.0",
+  "description": "Local-first CLI for deterministic reverse-dependency compatibility testing",
+  "license": "Apache-2.0",
   "type": "module",
   "bin": {"downstreamci": "./dist/index.js"},
   "scripts": {

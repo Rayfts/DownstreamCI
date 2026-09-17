@@ -1,6 +1,8 @@
 {
   "name": "@downstreamci/core",
   "version": "0.1.0",
+  "description": "Deterministic baseline-versus-candidate reverse-dependency CI core",
+  "license": "Apache-2.0",
   "type": "module",
   "exports": "./dist/index.js",
   "types": "./dist/index.d.ts",
