@@ -15,6 +15,8 @@ This prevents an unreviewed PR from granting itself network access, replacing th
 
 The Docker runner uses disposable baseline/candidate workspaces, a read-only root filesystem, writable workspace plus isolated `/tmp`, `--cap-drop=ALL`, `no-new-privileges`, bounded PID/CPU/memory/time, network `none` by default, explicit environment injection, bounded logs, no host Docker socket, and a read-only `/candidate` mount.
 
+Candidate input is first copied into a temporary **tracked-only Git snapshot**. Downstream containers never receive the upstream repository's `.git` directory, ignored files, or untracked host files such as local `.env` files and editor/build artifacts. The snapshot reflects current tracked working-tree content, is mounted read-only, and skips gitlink/submodule working trees rather than recursively exposing their untracked contents. Non-Git candidate paths fail as setup errors instead of being mounted wholesale.
+
 Worker-side defense in depth clamps programmatic execution requests to at most 16 CPUs, 32 GiB RAM, 4,096 PIDs, and two hours per command. Configuration validation applies the same ceilings. Service sidecars are limited to eight per downstream, 8 GiB RAM and 1,024 PIDs each, with health waits capped at five minutes.
 
 ## Worker API
@@ -26,6 +28,8 @@ Keep the worker service on a private network/firewall segment even when bearer a
 ## Host-side Git and secrets
 
 Git checkout uses an isolated HOME, disables system Git configuration and terminal credential prompts, and keeps optional read credentials in a temporary `.netrc`. Do not put GitHub App private keys, GitHub write tokens, SSH agents, package-publish tokens, cloud credentials, or production secrets into generic downstream environments. Check-output redaction is defense in depth, not permission to inject secrets.
+
+Optional coding-agent subprocesses also run with an isolated HOME/USERPROFILE/XDG config/cache/temp environment rather than inheriting the worker's full `process.env`. Only a small platform environment plus explicitly supported model-provider variables is forwarded. `GITHUB_*`, `GH_TOKEN`, `DOWNSTREAMCI_*`, `AWS_*`, and secret/password/private-key-shaped allowlist entries are excluded even when an operator adds them to `DOWNSTREAMCI_AGENT_ENV_ALLOWLIST`.
 
 ## Network
 
