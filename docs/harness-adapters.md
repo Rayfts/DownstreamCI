@@ -21,6 +21,8 @@ Repository ownership and CLIs can move. A capability change should update its ev
 
 ## Prompt contract
 
-The analyzer receives bounded upstream diff text, candidate metadata, baseline/candidate logs, dependency context, and runtime metadata. It runs in a disposable temporary analysis directory rather than either downstream checkout. The prompt explicitly states that deterministic CI already owns pass/fail and asks for evidence, uncertainty, and a semantic failure category.
+Per-failure analysis receives bounded upstream diff text, candidate metadata, baseline/candidate logs, dependency context, and runtime metadata. Credential-shaped values are redacted before the prompt reaches a harness. It runs in a disposable temporary analysis directory rather than either downstream checkout. The prompt explicitly states that deterministic CI already owns pass/fail and asks for evidence, uncertainty, and a semantic failure category.
+
+DownstreamCI also exposes optional **semantic cluster analysis** over the already-deterministic failure clusters. The agent receives immutable cluster IDs and bounded/redacted evidence, and may suggest higher-level semantic families. This output remains `ANALYSIS`; it cannot merge deterministic clusters or change classifications, confidence, Check conclusions, or release-blocking facts.
 
 Provider/harness authentication remains the operator's responsibility. Analysis is optional; the deterministic comparison works without any coding agent.
