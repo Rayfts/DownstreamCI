@@ -33,6 +33,7 @@ apps/github-app
         |
         v
 authenticated worker lease
+  + periodic lease heartbeat
         |
         v
 apps/worker coordinator loop
@@ -41,12 +42,12 @@ apps/worker coordinator loop
   untrusted downstreams in Docker
         |
         v
-internal completion endpoint
+owner-checked completion endpoint
   update original Check Run
   persist SQLite/PostgreSQL history
 ```
 
-The webhook process never executes arbitrary repository code.
+The webhook process never executes arbitrary repository code. A worker may publish completion only while it still owns a live lease; expired work can be reclaimed without allowing stale completion to overwrite the new owner's result.
 
 ## Trust boundaries
 
@@ -70,7 +71,7 @@ Optional service containers use a dedicated Docker network, no host port mapping
 
 - **SQLite** is the default local run-history store.
 - **PostgreSQL** is available through `PostgresRunStore` when `DOWNSTREAMCI_DATABASE_URL` or `DATABASE_URL` is configured by the GitHub service.
-- **Coordinator jobs** are stored durably in SQLite with leases so crashed workers can be recovered after lease expiry.
+- **Coordinator jobs** are stored durably in SQLite with worker-owned renewable leases; expired leases can be reclaimed safely because stale workers cannot complete them.
 - **Artifacts** are local sanitized/checksummed files under `.downstreamci/artifacts/<run-id>/` in local CLI mode.
 
 Object storage is intentionally an extension point: the comparison contract stores artifact references rather than requiring a proprietary storage service.

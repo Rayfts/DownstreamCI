@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 describe("GitHub coordinator", () => {
-  it("verifies webhooks, persists a job, and exposes it only to authenticated workers", async () => {
+  it("verifies webhooks and enforces worker-owned renewable leases", async () => {
     process.env.GITHUB_WEBHOOK_SECRET = "webhook-secret";
     process.env.DOWNSTREAMCI_INTERNAL_TOKEN = "internal-secret";
     const directory = await mkdtemp(join(tmpdir(), "downstreamci-github-app-"));
@@ -59,7 +59,7 @@ describe("GitHub coordinator", () => {
       method: "POST",
       url: "/internal/jobs/claim",
       headers: { "content-type": "application/json", authorization: "Bearer internal-secret" },
-      payload: JSON.stringify({ workerId: "worker-1" }),
+      payload: JSON.stringify({ workerId: "worker-1", leaseSeconds: 120 }),
     });
     expect(claimed.statusCode).toBe(200);
     const body = claimed.json() as { job: { id: string; owner: string; repo: string; headSha: string } };
@@ -67,11 +67,43 @@ describe("GitHub coordinator", () => {
     expect(body.job.repo).toBe("library");
     expect(body.job.headSha).toBe("abc123");
 
+    const wrongRenewal = await app.inject({
+      method: "POST",
+      url: `/internal/jobs/${body.job.id}/lease`,
+      headers: { "content-type": "application/json", authorization: "Bearer internal-secret" },
+      payload: JSON.stringify({ workerId: "worker-2", leaseSeconds: 240 }),
+    });
+    expect(wrongRenewal.statusCode).toBe(409);
+
+    const renewed = await app.inject({
+      method: "POST",
+      url: `/internal/jobs/${body.job.id}/lease`,
+      headers: { "content-type": "application/json", authorization: "Bearer internal-secret" },
+      payload: JSON.stringify({ workerId: "worker-1", leaseSeconds: 240 }),
+    });
+    expect(renewed.statusCode).toBe(200);
+
+    const staleCompletion = await app.inject({
+      method: "POST",
+      url: `/internal/jobs/${body.job.id}/complete`,
+      headers: { "content-type": "application/json", authorization: "Bearer internal-secret" },
+      payload: JSON.stringify({
+        workerId: "worker-2",
+        runId: "stale-run",
+        upstream: "org/library",
+        ref: "abc123",
+        comparisons: [],
+      }),
+    });
+    expect(staleCompletion.statusCode).toBe(409);
+    expect(checks.update).not.toHaveBeenCalled();
+
     const completed = await app.inject({
       method: "POST",
       url: `/internal/jobs/${body.job.id}/complete`,
       headers: { "content-type": "application/json", authorization: "Bearer internal-secret" },
       payload: JSON.stringify({
+        workerId: "worker-1",
         runId: "run-1",
         upstream: "org/library",
         ref: "abc123",

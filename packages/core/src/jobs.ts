@@ -107,7 +107,7 @@ export class CoordinatorJobStore {
         `)
         .get(now) as JobRow | undefined;
       if (!row) return null;
-      const leaseUntil = now + Math.max(60, Math.min(3600, leaseSeconds)) * 1000;
+      const leaseUntil = now + boundedLeaseSeconds(leaseSeconds) * 1000;
       this.sqlite
         .prepare(`
           UPDATE coordinator_jobs
@@ -118,6 +118,43 @@ export class CoordinatorJobStore {
       return this.get(row.id);
     });
     return transaction.immediate();
+  }
+
+  renew(id: string, workerId: string, leaseSeconds = 900): CoordinatorJob | null {
+    const now = Date.now();
+    const leaseUntil = now + boundedLeaseSeconds(leaseSeconds) * 1000;
+    const result = this.sqlite
+      .prepare(`
+        UPDATE coordinator_jobs
+        SET lease_until = ?, updated_at = ?
+        WHERE id = ?
+          AND status = 'running'
+          AND worker_id = ?
+          AND lease_until IS NOT NULL
+          AND lease_until >= ?
+      `)
+      .run(leaseUntil, now, id, workerId, now);
+    return result.changes === 1 ? this.get(id) : null;
+  }
+
+  finishClaimed(
+    id: string,
+    workerId: string,
+    status: Extract<CoordinatorJobStatus, "completed" | "failed">,
+  ): CoordinatorJob | null {
+    const now = Date.now();
+    const result = this.sqlite
+      .prepare(`
+        UPDATE coordinator_jobs
+        SET status = ?, worker_id = NULL, lease_until = NULL, updated_at = ?
+        WHERE id = ?
+          AND status = 'running'
+          AND worker_id = ?
+          AND lease_until IS NOT NULL
+          AND lease_until >= ?
+      `)
+      .run(status, now, id, workerId, now);
+    return result.changes === 1 ? this.get(id) : null;
   }
 
   finish(id: string, status: Extract<CoordinatorJobStatus, "completed" | "failed">): CoordinatorJob | null {
@@ -134,6 +171,10 @@ export class CoordinatorJobStore {
   close(): void {
     this.sqlite.close();
   }
+}
+
+function boundedLeaseSeconds(value: number): number {
+  return Math.max(60, Math.min(3600, Math.trunc(value)));
 }
 
 function fromRow(row: JobRow): CoordinatorJob {

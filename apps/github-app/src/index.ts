@@ -36,12 +36,13 @@ interface PullRequestWebhook {
   pull_request?: { number?: number; head?: { sha?: string } };
 }
 
-interface ClaimRequest {
+interface WorkerLeaseRequest {
   workerId?: string;
   leaseSeconds?: number;
 }
 
 interface CompleteRequest {
+  workerId?: string;
   runId?: string;
   upstream?: string;
   ref?: string;
@@ -82,7 +83,7 @@ export function createServer(dependencies: ServerDependencies = {}) {
     return { signals: await withRunStore(databasePath, (store) => store.signals(limit)) };
   });
 
-  app.post<{ Body: JsonEnvelope<ClaimRequest> }>("/internal/jobs/claim", async (request, reply) => {
+  app.post<{ Body: JsonEnvelope<WorkerLeaseRequest> }>("/internal/jobs/claim", async (request, reply) => {
     if (!validInternalToken(request.headers.authorization)) return reply.code(401).send({ error: "unauthorized" });
     const workerId = request.body.value.workerId?.trim();
     if (!workerId) return reply.code(400).send({ error: "workerId is required" });
@@ -96,17 +97,42 @@ export function createServer(dependencies: ServerDependencies = {}) {
     }
   });
 
+  app.post<{ Params: { id: string }; Body: JsonEnvelope<WorkerLeaseRequest> }>(
+    "/internal/jobs/:id/lease",
+    async (request, reply) => {
+      if (!validInternalToken(request.headers.authorization)) return reply.code(401).send({ error: "unauthorized" });
+      const workerId = request.body.value.workerId?.trim();
+      if (!workerId) return reply.code(400).send({ error: "workerId is required" });
+      const jobs = new CoordinatorJobStore(databasePath);
+      try {
+        if (!jobs.get(request.params.id)) return reply.code(404).send({ error: "unknown job" });
+        const renewed = jobs.renew(request.params.id, workerId, request.body.value.leaseSeconds ?? 900);
+        if (!renewed) return reply.code(409).send({ error: "job lease is expired or owned by another worker" });
+        return reply.send({ job: workerJob(renewed) });
+      } finally {
+        jobs.close();
+      }
+    },
+  );
+
   app.post<{ Params: { id: string }; Body: JsonEnvelope<CompleteRequest> }>(
     "/internal/jobs/:id/complete",
     async (request, reply) => {
       if (!validInternalToken(request.headers.authorization)) return reply.code(401).send({ error: "unauthorized" });
+      const body = request.body.value;
+      const workerId = body.workerId?.trim();
+      if (!workerId) return reply.code(400).send({ error: "workerId is required" });
+
       const jobs = new CoordinatorJobStore(databasePath);
       try {
-        const job = jobs.get(request.params.id);
+        const existing = jobs.get(request.params.id);
+        if (!existing) return reply.code(404).send({ error: "unknown job" });
+        if (!jobs.renew(existing.id, workerId, 900)) {
+          return reply.code(409).send({ error: "job lease is expired or owned by another worker" });
+        }
+        const job = jobs.get(existing.id);
         if (!job) return reply.code(404).send({ error: "unknown job" });
-        if (job.status !== "running") return reply.code(409).send({ error: `job is ${job.status}` });
 
-        const body = request.body.value;
         const octokit = await getOctokit(job.installationId);
         if (body.error) {
           await octokit.checks.update({
@@ -120,7 +146,9 @@ export function createServer(dependencies: ServerDependencies = {}) {
               summary: sanitizeCoordinatorMessage(body.error),
             },
           });
-          jobs.finish(job.id, "failed");
+          if (!jobs.finishClaimed(job.id, workerId, "failed")) {
+            throw new Error(`Unable to finish claimed job ${job.id}`);
+          }
           return reply.send({ ok: false, status: "failed" });
         }
 
@@ -138,7 +166,9 @@ export function createServer(dependencies: ServerDependencies = {}) {
           output: githubCheckOutput(comparisons),
         });
         await withRunStore(databasePath, (store) => store.save(body.runId as string, body.upstream as string, body.ref as string, comparisons));
-        jobs.finish(job.id, "completed");
+        if (!jobs.finishClaimed(job.id, workerId, "completed")) {
+          throw new Error(`Unable to finish claimed job ${job.id}`);
+        }
         return reply.send({ ok: true, conclusion: summary.conclusion });
       } finally {
         jobs.close();

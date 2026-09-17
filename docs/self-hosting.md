@@ -40,7 +40,7 @@ Relevant environment variables:
 - `DOWNSTREAMCI_DATABASE_URL` or `DATABASE_URL` — optional PostgreSQL run history
 - `PORT` — defaults to 8787
 
-The queue is durable SQLite with worker leases. PostgreSQL is used for run history when configured; queue state remains local to the coordinator instance.
+The queue is durable SQLite with worker-owned renewable leases. PostgreSQL is used for run history when configured; queue state remains local to the coordinator instance.
 
 ## Distributed worker
 
@@ -53,9 +53,10 @@ Set:
 - optional `DOWNSTREAMCI_RUNNER_IMAGE`
 - optional `DOWNSTREAMCI_RETRIES` (1-10)
 - optional `DOWNSTREAMCI_POLL_MS`
+- optional `DOWNSTREAMCI_LEASE_SECONDS` (120-3600; default 900)
 - optional host-only `DOWNSTREAMCI_GITHUB_READ_TOKEN` for private GitHub clones
 
-Start the worker with `DOWNSTREAMCI_COORDINATOR=1 DOWNSTREAMCI_STANDALONE=1` after building the app. Multiple workers can poll one coordinator; leases prevent the same active job from being claimed twice.
+Start the worker with `DOWNSTREAMCI_COORDINATOR=1 DOWNSTREAMCI_STANDALONE=1` after building the app. Multiple workers can poll one coordinator. Active workers heartbeat their leases, expired leases can be reclaimed, and completion is rejected when the submitting worker no longer owns the live lease.
 
 `DOWNSTREAMCI_WORKSPACE_ROOT` is also enforced by the direct worker execution API. Resolved requested paths outside that filesystem root are rejected.
 

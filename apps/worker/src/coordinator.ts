@@ -21,8 +21,14 @@ interface CoordinatorConfig {
   token: string;
   workerId: string;
   pollMs: number;
+  leaseSeconds: number;
   runnerImage: string;
   retries: number;
+}
+
+interface LeaseHeartbeat {
+  stop(): void;
+  done: Promise<void>;
 }
 
 export async function runCoordinatorLoop(signal?: AbortSignal): Promise<void> {
@@ -34,10 +40,16 @@ export async function runCoordinatorLoop(signal?: AbortSignal): Promise<void> {
         await sleep(config.pollMs, signal);
         continue;
       }
+
+      const heartbeat = startLeaseHeartbeat(config, job.id);
       try {
         const result = await executeJob(job, config);
+        heartbeat.stop();
+        await heartbeat.done;
         await completeJob(config, job.id, result);
       } catch (error) {
+        heartbeat.stop();
+        await heartbeat.done;
         await failJob(config, job.id, error instanceof Error ? error.message : String(error));
       }
     } catch (error) {
@@ -71,13 +83,22 @@ async function claimJob(config: CoordinatorConfig): Promise<WorkerJob | null> {
   const response = await fetch(`${config.url}/internal/jobs/claim`, {
     method: "POST",
     headers: headers(config.token),
-    body: JSON.stringify({ workerId: config.workerId, leaseSeconds: 900 }),
+    body: JSON.stringify({ workerId: config.workerId, leaseSeconds: config.leaseSeconds }),
   });
   if (response.status === 204) return null;
   if (!response.ok) throw new Error(`claim failed (${response.status}): ${await response.text()}`);
   const payload = (await response.json()) as { job?: WorkerJob };
   if (!payload.job) throw new Error("coordinator returned no job");
   return payload.job;
+}
+
+async function renewJob(config: CoordinatorConfig, jobId: string): Promise<void> {
+  const response = await fetch(`${config.url}/internal/jobs/${encodeURIComponent(jobId)}/lease`, {
+    method: "POST",
+    headers: headers(config.token),
+    body: JSON.stringify({ workerId: config.workerId, leaseSeconds: config.leaseSeconds }),
+  });
+  if (!response.ok) throw new Error(`lease renewal failed (${response.status}): ${await response.text()}`);
 }
 
 async function completeJob(
@@ -88,7 +109,7 @@ async function completeJob(
   const response = await fetch(`${config.url}/internal/jobs/${encodeURIComponent(jobId)}/complete`, {
     method: "POST",
     headers: headers(config.token),
-    body: JSON.stringify(result),
+    body: JSON.stringify({ ...result, workerId: config.workerId }),
   });
   if (!response.ok) throw new Error(`completion failed (${response.status}): ${await response.text()}`);
 }
@@ -97,9 +118,26 @@ async function failJob(config: CoordinatorConfig, jobId: string, error: string):
   const response = await fetch(`${config.url}/internal/jobs/${encodeURIComponent(jobId)}/complete`, {
     method: "POST",
     headers: headers(config.token),
-    body: JSON.stringify({ error }),
+    body: JSON.stringify({ workerId: config.workerId, error }),
   });
   if (!response.ok) throw new Error(`failure report failed (${response.status}): ${await response.text()}`);
+}
+
+function startLeaseHeartbeat(config: CoordinatorConfig, jobId: string): LeaseHeartbeat {
+  const controller = new AbortController();
+  const intervalMs = Math.max(30_000, Math.floor((config.leaseSeconds * 1000) / 3));
+  const done = (async () => {
+    while (!controller.signal.aborted) {
+      await sleep(intervalMs, controller.signal);
+      if (controller.signal.aborted) return;
+      try {
+        await renewJob(config, jobId);
+      } catch (error) {
+        console.error(`lease heartbeat error for ${jobId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  })();
+  return { stop: () => controller.abort(), done };
 }
 
 function coordinatorConfig(): CoordinatorConfig {
@@ -111,6 +149,7 @@ function coordinatorConfig(): CoordinatorConfig {
     token,
     workerId: process.env.DOWNSTREAMCI_WORKER_ID ?? `worker-${process.pid}`,
     pollMs: boundedInt(process.env.DOWNSTREAMCI_POLL_MS, 2_000, 250, 60_000),
+    leaseSeconds: boundedInt(process.env.DOWNSTREAMCI_LEASE_SECONDS, 900, 120, 3_600),
     runnerImage: process.env.DOWNSTREAMCI_RUNNER_IMAGE ?? "downstreamci/runner:local",
     retries: boundedInt(process.env.DOWNSTREAMCI_RETRIES, 2, 1, 10),
   };
@@ -136,9 +175,13 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return;
   await new Promise<void>((resolvePromise) => {
     const timer = setTimeout(resolvePromise, ms);
-    signal?.addEventListener("abort", () => {
-      clearTimeout(timer);
-      resolvePromise();
-    }, { once: true });
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolvePromise();
+      },
+      { once: true },
+    );
   });
 }
