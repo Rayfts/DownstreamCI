@@ -54,8 +54,9 @@ export const npmAdapter: EcosystemAdapter = {
   },
   async injectionCommands(_candidate, mountedCandidatePath = "/candidate") {
     return [
-      "rm -rf .downstreamci/candidate && mkdir -p .downstreamci/candidate",
-      `npm pack ${shell(mountedCandidatePath)} --pack-destination .downstreamci/candidate`,
+      "rm -rf .downstreamci/candidate-src .downstreamci/candidate && mkdir -p .downstreamci/candidate-src .downstreamci/candidate",
+      `cp -a ${shell(`${mountedCandidatePath}/.`)} .downstreamci/candidate-src/`,
+      "npm pack .downstreamci/candidate-src --pack-destination .downstreamci/candidate",
       `TARBALL=$(ls -t .downstreamci/candidate/*.tgz | head -1); PM=$(${nodeManager}); if [ "$PM" = pnpm ]; then corepack pnpm add --ignore-scripts "$TARBALL"; elif [ "$PM" = yarn ]; then YARN_ENABLE_SCRIPTS=false corepack yarn add "$TARBALL"; else npm install --no-save --ignore-scripts --no-audit --no-fund "$TARBALL"; fi`,
     ];
   },
@@ -89,8 +90,9 @@ export const pythonAdapter: EcosystemAdapter = {
   },
   async injectionCommands(_candidate, mountedCandidatePath = "/candidate") {
     return [
-      "rm -rf .downstreamci/candidate-wheel && mkdir -p .downstreamci/candidate-wheel",
-      `python -m build --wheel --outdir .downstreamci/candidate-wheel ${shell(mountedCandidatePath)}`,
+      "rm -rf .downstreamci/candidate-src .downstreamci/candidate-wheel && mkdir -p .downstreamci/candidate-src .downstreamci/candidate-wheel",
+      `cp -a ${shell(`${mountedCandidatePath}/.`)} .downstreamci/candidate-src/`,
+      "python -m build --wheel --outdir .downstreamci/candidate-wheel .downstreamci/candidate-src",
       'WHEEL=$(ls -t .downstreamci/candidate-wheel/*.whl | head -1); if [ -f uv.lock ]; then PYTHON=$(command -v python); if [ -x .venv/bin/python ]; then PYTHON=.venv/bin/python; fi; uv pip install --python "$PYTHON" --reinstall --no-deps "$WHEEL"; elif [ -f poetry.lock ]; then poetry run python -m pip install --force-reinstall --no-deps "$WHEEL"; else PYTHON=python; if [ -x .venv/bin/python ]; then PYTHON=.venv/bin/python; fi; "$PYTHON" -m pip install --force-reinstall --no-deps "$WHEEL"; fi',
     ];
   },
