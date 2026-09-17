@@ -1,35 +1,58 @@
 # Ecosystem adapters
 
-Each adapter detects package identity, describes the upstream candidate, injects candidate source into a disposable downstream checkout, and reports its replacement strategy.
+`EcosystemAdapter` keeps package-manager mechanics outside the deterministic comparison engine. Each adapter detects the upstream package identity, describes a candidate, provides ordinary downstream setup commands, and injects the candidate into a disposable candidate checkout.
 
-Candidate source is mounted read-only at `/candidate`; downstream mutation happens only in the disposable candidate checkout.
+Candidate source is mounted read-only at `/candidate`. Baseline and candidate use separate downstream clones, so no restoration step is required.
 
-## npm
+## Node: npm, pnpm, Yarn
 
-Strategy: `npm-pack-local-tarball`.
+Strategy: `node-manager-local-tarball`.
 
-The candidate is packed with `npm pack`, then the resulting tarball is installed with `npm install --no-save --ignore-scripts`. The downstream's ordinary setup command remains responsible for creating its normal dependency tree first.
+The adapter reads `packageManager` and lockfiles to choose pnpm, Yarn, or npm. Ordinary setup uses the manager's lock-preserving install mode where available:
 
-This initial adapter intentionally favors deterministic local-tarball replacement over package-manager-specific lockfile rewriting. pnpm/yarn consumers can still be tested when their setup produces a Node-compatible dependency tree, but projects requiring manager-specific override semantics should use a custom adapter until those strategies are implemented explicitly.
+- pnpm: `pnpm install --frozen-lockfile`
+- Yarn 2+: `yarn install --immutable`
+- Yarn 1: `yarn install --frozen-lockfile`
+- npm with a lock: `npm ci`
+- npm without a lock: `npm install`
 
-## Python
+For the candidate run, upstream source is packed with `npm pack`, then the local tarball is added with the downstream's detected manager. Candidate replacement disables package lifecycle scripts during the replacement step; the downstream's configured build/test commands still run normally afterward.
 
-Strategy: `wheel-force-reinstall`.
+## Python: pip, uv, Poetry
 
-The runner builds a wheel with `python -m build` and installs it with `pip install --force-reinstall --no-deps`. If the downstream setup created `.venv/bin/python`, candidate installation targets that interpreter.
+Strategy: `python-wheel-manager-reinstall`.
 
-## Cargo
+Setup detects `uv.lock`, `poetry.lock`, `requirements.txt`, or a generic Python project:
+
+- uv: `uv sync --frozen`
+- Poetry: `poetry install --no-interaction --no-ansi`
+- pip requirements: `python -m pip install -r requirements.txt`
+- generic local project: editable pip install
+
+The candidate is built as a wheel with `python -m build` and force-reinstalled without dependency re-resolution into the active environment. uv and Poetry use their own environment/interpreter paths where applicable.
+
+## Rust Cargo
 
 Strategy: `cargo-patch-local-path`.
 
-The candidate checkout receives or updates a `[patch.crates-io]` entry pointing to `/candidate`, then runs `cargo update -p <package> --offline`. Patch mutation occurs only in the disposable downstream clone.
+The baseline setup fetches the locked dependency graph where a lockfile exists. Candidate injection adds or updates `[patch.crates-io]` for the upstream package, points it to `/candidate`, then refreshes that package offline. Mutation occurs only in the disposable candidate clone.
 
-## Go
+## Go modules
 
 Strategy: `go-mod-replace`.
 
-The adapter reads the module path from `go.mod` and executes `go mod edit -replace=<module>=/candidate`.
+The baseline setup downloads modules. Candidate injection reads the upstream module path from `go.mod` and applies `go mod edit -replace=<module>=/candidate` in the disposable candidate checkout.
 
-## Future adapters
+## Adapter invariants
 
-The interface is intentionally small enough for Maven, Gradle, NuGet, RubyGems, Composer, and Swift Package Manager. New strategies should be evidence-backed and must not silently fall back to a different replacement mechanism.
+A new adapter should:
+
+1. detect package identity from source-of-truth ecosystem metadata;
+2. provision the downstream's ordinary baseline dependency graph;
+3. build/describe the exact upstream candidate;
+4. replace only the target dependency in the candidate checkout;
+5. avoid mutating the baseline checkout;
+6. surface a named replacement strategy and deterministic metadata;
+7. fail closed rather than silently falling back to an unrelated mechanism.
+
+The interface is intentionally small enough for Maven/Gradle, NuGet, RubyGems, Composer, and SwiftPM adapters.

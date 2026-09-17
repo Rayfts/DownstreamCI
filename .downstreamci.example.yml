@@ -4,13 +4,12 @@ downstreams:
   - repository: https://github.com/example/consumer.git
     ref: 6bb7b8c0d5d4e2c8f0d3b55a73d18a41996611a9
     ecosystem: auto
-    setup: npm ci
     build: npm run build
     test: npm test
     timeoutSeconds: 900
     runtime:
       node: "24"
-    replacement: npm-pack-local-tarball
+    replacement: auto
     resources:
       cpus: 2
       memoryMb: 2048
@@ -19,3 +18,4 @@ downstreams:
       mode: bridge
     tags: [representative]
     priority: high
+    expectedFlakyTests: []

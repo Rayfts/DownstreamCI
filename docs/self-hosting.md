@@ -1,6 +1,8 @@
 # Self-hosting
 
-## Single machine
+DownstreamCI has no mandatory hosted control plane.
+
+## Single-machine CLI
 
 Requirements:
 
@@ -17,16 +19,58 @@ pnpm build
 pnpm check
 ```
 
-`downstreamci run .` defaults to the locally built `downstreamci/runner:local` image. Override it with `--runner-image` when publishing your own reviewed runner image.
+Run `downstreamci run .` from an upstream repository containing `.downstreamci.yml`.
 
-Run the worker and GitHub service behind an authenticated reverse proxy. Set `DOWNSTREAMCI_WORKSPACE_ROOT` for workers; requests outside that real filesystem root are rejected.
+Local state defaults to:
 
-## Storage
+- SQLite: `.downstreamci/downstreamci.db`
+- artifacts: `.downstreamci/artifacts/<run-id>/`
 
-Local mode uses SQLite. The GitHub service exposes read-only recent-run data at `/api/runs/latest` for the React dashboard. Set `DOWNSTREAMCI_DB` when the database is not at `.downstreamci/downstreamci.db`.
+## GitHub App coordinator
 
-Distributed mode should use a PostgreSQL-backed `RunStore` implementation and external artifact storage.
+Build the monorepo, then run `apps/github-app` with `DOWNSTREAMCI_STANDALONE=1`.
 
-## Workers
+Relevant environment variables:
 
-Horizontal workers should consume immutable job specifications containing the downstream repository/ref, candidate identity, commands, resource policy, and network policy. GitHub credentials stay with the coordinator.
+- `GITHUB_WEBHOOK_SECRET` — required for webhook HMAC verification
+- `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY` — recommended installation-scoped App auth
+- `GITHUB_TOKEN` — operator-managed alternative to App auth
+- `DOWNSTREAMCI_INTERNAL_TOKEN` — required bearer token for `/internal/*`
+- `DOWNSTREAMCI_DB` — SQLite path for local run history and coordinator jobs
+- `DOWNSTREAMCI_DATABASE_URL` or `DATABASE_URL` — optional PostgreSQL run history
+- `PORT` — defaults to 8787
+
+The queue is durable SQLite with worker leases. PostgreSQL is used for run history when configured; queue state remains local to the coordinator instance.
+
+## Distributed worker
+
+Set:
+
+- `DOWNSTREAMCI_COORDINATOR_URL`
+- `DOWNSTREAMCI_INTERNAL_TOKEN`
+- `DOWNSTREAMCI_WORKSPACE_ROOT`
+- optional `DOWNSTREAMCI_WORKER_ID`
+- optional `DOWNSTREAMCI_RUNNER_IMAGE`
+- optional `DOWNSTREAMCI_RETRIES` (1-10)
+- optional `DOWNSTREAMCI_POLL_MS`
+- optional host-only `DOWNSTREAMCI_GITHUB_READ_TOKEN` for private GitHub clones
+
+Start the worker with `DOWNSTREAMCI_COORDINATOR=1 DOWNSTREAMCI_STANDALONE=1` after building the app. Multiple workers can poll one coordinator; leases prevent the same active job from being claimed twice.
+
+`DOWNSTREAMCI_WORKSPACE_ROOT` is also enforced by the direct worker execution API. Resolved requested paths outside that filesystem root are rejected.
+
+## Runner image
+
+The bundled runner includes Node/npm/Corepack, pinned pnpm/Yarn, Python/pip/build, pinned uv/Poetry, Cargo/Rust, Go, Git, and build tooling. CI builds the image and checks each tool is executable.
+
+Pin/review your production runner image rather than allowing untrusted downstreams to select arbitrary privileged images.
+
+## Service containers
+
+Configured sidecars run on a unique Docker network with no host ports. They are capability-dropped, resource-bounded, no-new-privileges, and read-only by default. Use `tmpfs` for writable service data where possible. `network: bridge` explicitly allows external egress for the per-comparison network; otherwise Docker creates it as an internal network.
+
+## Storage and artifacts
+
+SQLite is the simplest local deployment. PostgreSQL provides distributed run history. Local CLI artifacts are sanitized and checksummed; object storage is an extension point rather than a required service.
+
+The dashboard reads `/api/runs/latest` and `/api/signals` from the GitHub service.

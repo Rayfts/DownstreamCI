@@ -132,6 +132,8 @@ export interface HarnessCapability {
   upstream: string;
   automated: boolean;
   structuredOutput: boolean;
+  verifiedAt: string;
+  evidence: string[];
   notes: string;
   buildInvocation(prompt: string): HarnessInvocation | null;
 }

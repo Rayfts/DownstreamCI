@@ -12,59 +12,62 @@ export function summarizeComparisons(comparisons: Comparison[]): CompatibilitySu
   const counts: Record<string, number> = {};
   for (const result of comparisons) counts[result.classification] = (counts[result.classification] ?? 0) + 1;
   const regressions = counts["newly-broken"] ?? 0;
-  const infrastructure = (counts["infrastructure-failure"] ?? 0) + (counts["setup-failure"] ?? 0);
+  const coverageGaps =
+    (counts["baseline-failing"] ?? 0) +
+    (counts.flaky ?? 0) +
+    (counts["infrastructure-failure"] ?? 0) +
+    (counts["setup-failure"] ?? 0) +
+    (counts.inconclusive ?? 0);
+  const summary = Object.entries(counts)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${value} ${key}`)
+    .join(" · ");
   return {
     total: comparisons.length,
     counts,
-    conclusion:
-      regressions > 0 ? "failure" : infrastructure === comparisons.length && comparisons.length > 0 ? "neutral" : "success",
+    conclusion: regressions > 0 ? "failure" : coverageGaps > 0 ? "neutral" : "success",
     title:
       regressions > 0
         ? `${regressions} downstream regression${regressions === 1 ? "" : "s"} detected`
-        : "No candidate-only regressions detected",
-    summary: Object.entries(counts)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => `${value} ${key}`)
-      .join(" · "),
+        : coverageGaps > 0
+          ? `No candidate-only regressions; ${coverageGaps} result${coverageGaps === 1 ? "" : "s"} need attention`
+          : "No candidate-only regressions detected",
+    summary,
   };
 }
 
 export function githubCheckOutput(comparisons: Comparison[]): { title: string; summary: string; text: string } {
   const summary = summarizeComparisons(comparisons);
-  const regressions = comparisons.filter((item) => item.classification === "newly-broken");
-  const text = regressions.length
-    ? regressions
-        .map((item, index) =>
-          [
-            `### Regression ${index + 1}${item.downstream ? ` — ${item.downstream.repository}` : ""}`,
-            item.downstream ? `Downstream ref: \`${item.downstream.ref}\`` : "",
-            item.confidence === undefined ? "" : `Confidence: ${Math.round(item.confidence * 100)}%`,
-            item.reason,
-            item.candidateSignature ? `Signature: \`${item.candidateSignature}\`` : "",
-            item.cluster ? `Cluster: \`${item.cluster.id}\` — ${item.cluster.label}` : "",
-            item.artifacts?.length ? `Evidence artifacts: ${item.artifacts.length}` : "",
-            item.analysis ? `**ANALYSIS (${item.analysis.harness})**\n\n${sanitizeLog(item.analysis.raw, 4_000)}` : "",
-            "<details><summary>Baseline log excerpt</summary>",
-            "",
-            "```text",
-            sanitizeLog(`${item.baseline.test.stderr}\n${item.baseline.test.stdout}`, 6_000),
-            "```",
-            "</details>",
-            "<details><summary>Candidate log excerpt</summary>",
-            "",
-            "```text",
-            sanitizeLog(`${item.candidate.test.stderr}\n${item.candidate.test.stdout}`, 6_000),
-            "```",
-            "</details>",
-          ]
-            .filter(Boolean)
-            .join("\n"),
-        )
-        .join("\n\n")
-    : "Baseline/candidate comparison found no candidate-only failures.";
+  const countLines = Object.entries(summary.counts)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([classification, count]) => `- **${classification}:** ${count}`);
+  const matrix = [
+    "## Deterministic compatibility matrix",
+    "",
+    "| Downstream | Baseline | Candidate | Classification | Confidence | Cluster |",
+    "|---|---:|---:|---|---:|---|",
+    ...comparisons.map((item) => {
+      const name = item.downstream?.repository ?? "downstream";
+      const confidence = item.confidence === undefined ? "—" : `${Math.round(item.confidence * 100)}%`;
+      const cluster = item.cluster?.id ?? "—";
+      return `| ${markdownCell(name)} | ${outcome(item.baseline)} | ${outcome(item.candidate)} | \`${item.classification}\` | ${confidence} | ${markdownCell(cluster)} |`;
+    }),
+  ].join("\n");
+  const evidence = comparisons
+    .filter((item) => item.classification !== "unaffected")
+    .sort((a, b) => priority(a) - priority(b))
+    .map(renderEvidence)
+    .join("\n\n");
+  const text = [
+    matrix,
+    "",
+    "## Counts",
+    ...(countLines.length ? countLines : ["- No downstream results were produced."]),
+    evidence ? `\n## Evidence\n\n${evidence}` : "\nAll approved downstream comparisons were unaffected.",
+  ].join("\n");
   return {
     title: summary.title.slice(0, 255),
-    summary: summary.summary.slice(0, 65_535),
+    summary: [`**Total downstreams:** ${summary.total}`, summary.summary || "No downstreams"].join("\n\n").slice(0, 65_535),
     text: text.slice(0, 60_000),
   };
 }
@@ -78,4 +81,63 @@ export function sanitizeLog(value: string, maxChars = 8_000): string {
     .replace(/\b(AWS_SECRET_ACCESS_KEY\s*[=:]\s*)\S+/gi, "$1<redacted>")
     .replace(/\b(Authorization:\s*Bearer\s+)\S+/gi, "$1<redacted>");
   return redacted.slice(-maxChars);
+}
+
+function renderEvidence(item: Comparison, index: number): string {
+  const name = item.downstream?.repository ?? `downstream-${index + 1}`;
+  const artifacts = item.artifacts?.length
+    ? [
+        "**Artifacts**",
+        ...item.artifacts.map(
+          (artifact) => `- \`${artifact.kind}\`: \`${artifact.path}\` (${artifact.bytes} bytes, sha256 \`${artifact.sha256}\`)`,
+        ),
+      ].join("\n")
+    : "";
+  const runtime = Object.keys(item.candidate.environment).length
+    ? ["<details><summary>Runtime environment</summary>", "", "```json", sanitizeLog(JSON.stringify(item.candidate.environment, null, 2), 4_000), "```", "</details>"].join("\n")
+    : "";
+  return [
+    `### ${markdownCell(name)} — \`${item.classification}\``,
+    item.downstream ? `Downstream ref: \`${item.downstream.ref}\`` : "",
+    item.confidence === undefined ? "" : `Confidence: ${Math.round(item.confidence * 100)}%`,
+    item.reason,
+    item.expectedFlakeMatch ? `Expected-flake match: \`${markdownCell(item.expectedFlakeMatch)}\`` : "",
+    item.baselineSignature ? `Baseline signature: \`${item.baselineSignature}\`` : "",
+    item.candidateSignature ? `Candidate signature: \`${item.candidateSignature}\`` : "",
+    item.cluster ? `Cluster: \`${item.cluster.id}\` (${item.cluster.members} member${item.cluster.members === 1 ? "" : "s"}) — ${markdownCell(item.cluster.label)}` : "",
+    artifacts,
+    item.analysis ? `**ANALYSIS (${item.analysis.harness})**\n\n${sanitizeLog(item.analysis.raw, 4_000)}` : "",
+    runtime,
+    "<details><summary>Baseline log excerpt</summary>",
+    "",
+    "```text",
+    sanitizeLog(`${item.baseline.test.stderr}\n${item.baseline.test.stdout}`, 5_000),
+    "```",
+    "</details>",
+    "<details><summary>Candidate log excerpt</summary>",
+    "",
+    "```text",
+    sanitizeLog(`${item.candidate.test.stderr}\n${item.candidate.test.stdout}`, 7_000),
+    "```",
+    "</details>",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function outcome(execution: Comparison["baseline"]): string {
+  if (execution.test.kind === "infrastructure") return "infrastructure";
+  if (execution.test.timedOut) return "timeout";
+  return execution.test.exitCode === 0 ? "pass" : `fail (${execution.test.exitCode ?? "null"})`;
+}
+
+function priority(comparison: Comparison): number {
+  if (comparison.classification === "newly-broken") return 0;
+  if (comparison.classification === "infrastructure-failure" || comparison.classification === "setup-failure") return 1;
+  if (comparison.classification === "flaky" || comparison.classification === "inconclusive") return 2;
+  return 3;
+}
+
+function markdownCell(value: string): string {
+  return value.replaceAll("|", "\\|").replace(/[\r\n]+/g, " ").slice(0, 240);
 }
