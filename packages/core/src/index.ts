@@ -8,6 +8,7 @@ export * from "./discovery.js";
 export * from "./artifacts.js";
 export * from "./process.js";
 export * from "./sandbox.js";
+export * from "./snapshot.js";
 export * from "./ecosystems.js";
 export * from "./harnesses.js";
 export * from "./agent-analysis.js";
