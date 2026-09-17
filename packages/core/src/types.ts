@@ -32,6 +32,7 @@ export interface Execution {
 export interface ArtifactReference {
   kind: "baseline-log" | "candidate-log" | "comparison";
   path: string;
+  url?: string;
   sha256: string;
   bytes: number;
 }
