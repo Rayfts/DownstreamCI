@@ -33,7 +33,12 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -t downstreamci/runner:ci containers/runner
       - run: docker run --rm downstreamci/runner:ci node --version
+      - run: docker run --rm downstreamci/runner:ci npm --version
+      - run: docker run --rm downstreamci/runner:ci pnpm --version
+      - run: docker run --rm downstreamci/runner:ci yarn --version
       - run: docker run --rm downstreamci/runner:ci python --version
+      - run: docker run --rm downstreamci/runner:ci uv --version
+      - run: docker run --rm downstreamci/runner:ci poetry --version
       - run: docker run --rm downstreamci/runner:ci cargo --version
       - run: docker run --rm downstreamci/runner:ci go version
 

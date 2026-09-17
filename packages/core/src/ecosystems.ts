@@ -7,6 +7,7 @@ export interface EcosystemAdapter {
   detect(path: string): Promise<boolean>;
   packageIdentity(path: string): Promise<string>;
   buildCandidate(path: string): Promise<CandidateArtifact>;
+  setupCommands(): Promise<string[]>;
   injectionCommands(candidate: CandidateArtifact, mountedCandidatePath?: string): Promise<string[]>;
 }
 
@@ -23,6 +24,13 @@ function shell(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
+const nodeManager = [
+  'PM=$(node -e "try { const p=require(\'./package.json\').packageManager || \'\'; process.stdout.write(p.split(\'@\')[0]); } catch {}")',
+  'if [ "$PM" = "pnpm" ] || { [ -z "$PM" ] && [ -f pnpm-lock.yaml ]; }; then echo pnpm',
+  'elif [ "$PM" = "yarn" ] || { [ -z "$PM" ] && [ -f yarn.lock ]; }; then echo yarn',
+  "else echo npm; fi",
+].join("; ");
+
 export const npmAdapter: EcosystemAdapter = {
   id: "npm",
   detect: (path) => exists(join(path, "package.json")),
@@ -36,14 +44,19 @@ export const npmAdapter: EcosystemAdapter = {
       ecosystem: "npm",
       identity: await this.packageIdentity(path),
       path,
-      metadata: { strategy: "npm-pack-local-tarball" },
+      metadata: { strategy: "node-manager-local-tarball" },
     };
+  },
+  async setupCommands() {
+    return [
+      `PM=$(${nodeManager}); if [ "$PM" = pnpm ]; then corepack pnpm install --frozen-lockfile; elif [ "$PM" = yarn ]; then YARN_MAJOR=$(corepack yarn --version | cut -d. -f1); if [ "$YARN_MAJOR" -ge 2 ]; then corepack yarn install --immutable; else corepack yarn install --frozen-lockfile; fi; elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi`,
+    ];
   },
   async injectionCommands(_candidate, mountedCandidatePath = "/candidate") {
     return [
       "rm -rf .downstreamci/candidate && mkdir -p .downstreamci/candidate",
       `npm pack ${shell(mountedCandidatePath)} --pack-destination .downstreamci/candidate`,
-      "TARBALL=$(ls -t .downstreamci/candidate/*.tgz | head -1) && npm install --no-save --ignore-scripts --no-audit --no-fund \"$TARBALL\"",
+      `TARBALL=$(ls -t .downstreamci/candidate/*.tgz | head -1); PM=$(${nodeManager}); if [ "$PM" = pnpm ]; then corepack pnpm add --ignore-scripts "$TARBALL"; elif [ "$PM" = yarn ]; then YARN_ENABLE_SCRIPTS=false corepack yarn add "$TARBALL"; else npm install --no-save --ignore-scripts --no-audit --no-fund "$TARBALL"; fi`,
     ];
   },
 };
@@ -66,14 +79,19 @@ export const pythonAdapter: EcosystemAdapter = {
       ecosystem: "python",
       identity: await this.packageIdentity(path),
       path,
-      metadata: { strategy: "wheel-force-reinstall" },
+      metadata: { strategy: "python-wheel-manager-reinstall" },
     };
+  },
+  async setupCommands() {
+    return [
+      "if [ -f uv.lock ]; then uv sync --frozen; elif [ -f poetry.lock ]; then poetry install --no-interaction --no-ansi; elif [ -f requirements.txt ]; then python -m pip install -r requirements.txt; elif [ -f pyproject.toml ] || [ -f setup.py ]; then python -m pip install -e .; fi",
+    ];
   },
   async injectionCommands(_candidate, mountedCandidatePath = "/candidate") {
     return [
       "rm -rf .downstreamci/candidate-wheel && mkdir -p .downstreamci/candidate-wheel",
       `python -m build --wheel --outdir .downstreamci/candidate-wheel ${shell(mountedCandidatePath)}`,
-      "PYTHON=python; if [ -x .venv/bin/python ]; then PYTHON=.venv/bin/python; fi; \"$PYTHON\" -m pip install --force-reinstall --no-deps .downstreamci/candidate-wheel/*.whl",
+      'WHEEL=$(ls -t .downstreamci/candidate-wheel/*.whl | head -1); if [ -f uv.lock ]; then PYTHON=$(command -v python); if [ -x .venv/bin/python ]; then PYTHON=.venv/bin/python; fi; uv pip install --python "$PYTHON" --reinstall --no-deps "$WHEEL"; elif [ -f poetry.lock ]; then poetry run python -m pip install --force-reinstall --no-deps "$WHEEL"; else PYTHON=python; if [ -x .venv/bin/python ]; then PYTHON=.venv/bin/python; fi; "$PYTHON" -m pip install --force-reinstall --no-deps "$WHEEL"; fi',
     ];
   },
 };
@@ -94,6 +112,9 @@ export const cargoAdapter: EcosystemAdapter = {
       path,
       metadata: { strategy: "cargo-patch-local-path" },
     };
+  },
+  async setupCommands() {
+    return ['if [ -f Cargo.lock ]; then cargo fetch --locked; else cargo fetch; fi'];
   },
   async injectionCommands(candidate, mountedCandidatePath = "/candidate") {
     const entry = `${candidate.identity} = { path = ${JSON.stringify(mountedCandidatePath)} }`;
@@ -140,6 +161,9 @@ export const goAdapter: EcosystemAdapter = {
       path,
       metadata: { strategy: "go-mod-replace" },
     };
+  },
+  async setupCommands() {
+    return ["go mod download"];
   },
   async injectionCommands(candidate, mountedCandidatePath = "/candidate") {
     return [`go mod edit -replace=${shell(candidate.identity)}=${shell(mountedCandidatePath)}`];

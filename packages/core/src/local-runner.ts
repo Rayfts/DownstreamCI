@@ -23,12 +23,16 @@ export class DockerPairRunner implements PairRunner {
 
   private async execute(workspace: string, spec: DownstreamSpec, candidate: boolean): Promise<Execution> {
     if (spec.services?.length) {
-      throw new Error("Service-container orchestration is not available in the local runner yet; remove services or use a custom worker implementation.");
+      throw new Error(
+        "Service-container orchestration is not available in the local runner yet; remove services or use a custom worker implementation.",
+      );
     }
     const requestedStrategy = spec.replacement;
     const actualStrategy = this.options.candidate.metadata.strategy;
     if (requestedStrategy && requestedStrategy !== "auto" && requestedStrategy !== actualStrategy) {
-      throw new Error(`Replacement strategy ${requestedStrategy} is not supported by the ${this.options.adapter.id} adapter; use ${actualStrategy ?? "auto"}.`);
+      throw new Error(
+        `Replacement strategy ${requestedStrategy} is not supported by the ${this.options.adapter.id} adapter; use ${actualStrategy ?? "auto"}.`,
+      );
     }
 
     const resourceTimeout = spec.timeoutSeconds ?? spec.resources?.timeoutSeconds;
@@ -43,8 +47,10 @@ export class DockerPairRunner implements PairRunner {
     const runtime = await probeRuntime(image, workspace, spec, mounts, resources);
     if (runtime.failure) return failedSetup(runtime.failure, runtime.environment);
 
-    const setup = spec.setup
-      ? await runInDocker({ image, workspace, command: spec.setup, env, network, resources, mounts, kind: "setup" })
+    const setupCommands = spec.setup ? [spec.setup] : await this.options.adapter.setupCommands();
+    const setupCommand = setupCommands.filter(Boolean).join(" && ");
+    const setup = setupCommand
+      ? await runInDocker({ image, workspace, command: setupCommand, env, network, resources, mounts, kind: "setup" })
       : undefined;
     if (setup && setup.exitCode !== 0) return failedSetup(setup, runtime.environment);
 
@@ -90,7 +96,9 @@ async function probeRuntime(
   };
   const requested = Object.keys(spec.runtime);
   const unknown = requested.filter((key) => !commands[key]);
-  if (unknown.length) throw new Error(`Unsupported runtime keys: ${unknown.join(", ")}. Supported keys: node, python, rust, go.`);
+  if (unknown.length) {
+    throw new Error(`Unsupported runtime keys: ${unknown.join(", ")}. Supported keys: node, python, rust, go.`);
+  }
   const command = requested.map((key) => `printf '${key}='; ${commands[key]}`).join("; ");
   const result = await runInDocker({
     image,
@@ -103,10 +111,14 @@ async function probeRuntime(
   });
   if (result.exitCode !== 0) return { environment: {}, failure: result };
   const environment = Object.fromEntries(
-    result.stdout.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
-      const index = line.indexOf("=");
-      return index === -1 ? [line, ""] : [line.slice(0, index), line.slice(index + 1)];
-    }),
+    result.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const index = line.indexOf("=");
+        return index === -1 ? [line, ""] : [line.slice(0, index), line.slice(index + 1)];
+      }),
   );
   for (const [key, expected] of Object.entries(spec.runtime)) {
     const actual = environment[key] ?? "";
