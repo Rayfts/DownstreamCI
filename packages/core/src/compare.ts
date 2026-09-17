@@ -32,16 +32,6 @@ export function compareExecutions(baseline: Execution, candidate: Execution): Co
     ...(candidateSignature ? { candidateSignature } : {}),
   };
 
-  if (setupFailed(baseline) || setupFailed(candidate)) {
-    return {
-      classification: "setup-failure",
-      confidence: 0.25,
-      baseline,
-      candidate,
-      ...withSignatures,
-      reason: "Setup failed before a trustworthy comparison could be made.",
-    };
-  }
   if (infra(baseline) || infra(candidate)) {
     return {
       classification: "infrastructure-failure",
@@ -50,6 +40,16 @@ export function compareExecutions(baseline: Execution, candidate: Execution): Co
       candidate,
       ...withSignatures,
       reason: "A timeout or infrastructure failure prevented a trustworthy comparison.",
+    };
+  }
+  if (setupFailed(baseline) || setupFailed(candidate)) {
+    return {
+      classification: "setup-failure",
+      confidence: 0.25,
+      baseline,
+      candidate,
+      ...withSignatures,
+      reason: "Setup failed before a trustworthy comparison could be made.",
     };
   }
   if (observedBothPassAndFail(baseline) || observedBothPassAndFail(candidate)) {
