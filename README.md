@@ -68,13 +68,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Rayfts/DownstreamCI@v1
+      - uses: Rayfts/DownstreamCI@<pinned-ref>
         with:
           config: .downstreamci.yml
           retries: "2"
 ```
 
-For private downstream repositories, pass `github-token` explicitly. It is used only by host-side Git checkout and is not injected into downstream test containers. The Action does not require a proprietary DownstreamCI cloud service.
+Replace `<pinned-ref>` with a reviewed release tag or full commit SHA. For private downstream repositories, pass `github-token` explicitly. It is used only by host-side Git checkout and is not injected into downstream test containers. The Action does not require a proprietary DownstreamCI cloud service.
 
 ## Configuration
 
@@ -224,7 +224,7 @@ pnpm build
 docker build -t downstreamci/runner:ci containers/runner
 ```
 
-CI exercises Node 22 and 24, tests, fixtures, lint/build, production dependency audit, secret-pattern scanning, and the runner image/toolchain.
+CI exercises Node 22 and 24, tests, fixtures, lint/build, production dependency audit, secret-pattern scanning, the runner image/toolchain, a real Docker baseline/candidate comparison, and a live PostgreSQL integration test.
 
 ## License
 
