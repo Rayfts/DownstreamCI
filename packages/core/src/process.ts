@@ -4,6 +4,7 @@ import type { CommandResult } from "./types.js";
 export interface RunProcessOptions {
   cwd?: string;
   env?: Record<string, string>;
+  inheritEnv?: boolean;
   timeoutSeconds?: number;
   input?: string;
   kind?: CommandResult["kind"];
@@ -16,9 +17,10 @@ export async function runProcess(command: string, args: string[], options: RunPr
   const started = Date.now();
   const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   return new Promise((resolve, reject) => {
+    const inherited = options.inheritEnv === false ? {} : process.env;
     const child = spawn(command, args, {
       ...(options.cwd ? { cwd: options.cwd } : {}),
-      env: { ...process.env, ...options.env },
+      env: { ...inherited, ...options.env },
       stdio: ["pipe", "pipe", "pipe"],
       shell: false,
     });
