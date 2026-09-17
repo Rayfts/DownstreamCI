@@ -1,5 +1,6 @@
 import { createHmac, createSign, randomUUID, timingSafeEqual } from "node:crypto";
-import { resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { isAbsolute, relative, resolve } from "node:path";
 import { Octokit } from "@octokit/rest";
 import {
   CoordinatorJobStore,
@@ -7,7 +8,9 @@ import {
   RunStore,
   clusterComparisons,
   githubCheckOutput,
+  sanitizeLog,
   summarizeComparisons,
+  writeRunArtifacts,
   type Comparison,
   type CoordinatorJob,
 } from "@downstreamci/core";
@@ -57,14 +60,19 @@ interface CompleteRequest {
 export interface ServerDependencies {
   getOctokit?: (installationId?: number) => Promise<Octokit>;
   databasePath?: string;
+  artifactRoot?: string;
 }
 
 type AnyRunStore = RunStore | PostgresRunStore;
+
+const ARTIFACT_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$/;
+const ARTIFACT_FILES = new Set(["baseline.log", "candidate.log", "comparison.json", "manifest.json"]);
 
 export function createServer(dependencies: ServerDependencies = {}) {
   const app = Fastify({ logger: true, bodyLimit: 2_000_000 });
   const getOctokit = dependencies.getOctokit ?? installationClient;
   const databasePath = dependencies.databasePath ?? resolve(process.env.DOWNSTREAMCI_DB ?? ".downstreamci/downstreamci.db");
+  const artifactRoot = dependencies.artifactRoot ?? resolve(process.env.DOWNSTREAMCI_ARTIFACT_ROOT ?? ".downstreamci/artifacts");
 
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (_request, body, done) => {
     try {
@@ -86,6 +94,28 @@ export function createServer(dependencies: ServerDependencies = {}) {
     const limit = parseLimit(request.query.limit, 100);
     return { signals: await withRunStore(databasePath, (store) => store.signals(limit)) };
   });
+
+  if (process.env.DOWNSTREAMCI_SERVE_ARTIFACTS === "1") {
+    app.get<{ Params: { runId: string; bundle: string; file: string } }>(
+      "/api/artifacts/:runId/:bundle/:file",
+      async (request, reply) => {
+        const { runId, bundle, file } = request.params;
+        if (!ARTIFACT_SEGMENT.test(runId) || !ARTIFACT_SEGMENT.test(bundle) || !ARTIFACT_FILES.has(file)) {
+          return reply.code(404).send({ error: "artifact not found" });
+        }
+        const path = resolve(artifactRoot, runId, bundle, file);
+        const rel = relative(artifactRoot, path);
+        if (rel.startsWith("..") || isAbsolute(rel)) return reply.code(404).send({ error: "artifact not found" });
+        try {
+          const content = await readFile(path);
+          reply.type(file.endsWith(".json") ? "application/json; charset=utf-8" : "text/plain; charset=utf-8");
+          return reply.send(content);
+        } catch {
+          return reply.code(404).send({ error: "artifact not found" });
+        }
+      },
+    );
+  }
 
   app.post<{ Body: JsonEnvelope<WorkerLeaseRequest> }>("/internal/jobs/claim", async (request, reply) => {
     if (!validInternalToken(request.headers.authorization)) return reply.code(401).send({ error: "unauthorized" });
@@ -159,7 +189,8 @@ export function createServer(dependencies: ServerDependencies = {}) {
         if (!body.comparisons || !body.runId || !body.upstream || !body.ref) {
           return reply.code(400).send({ error: "runId, upstream, ref, and comparisons are required" });
         }
-        const comparisons = clusterComparisons(body.comparisons);
+        let comparisons = clusterComparisons(body.comparisons);
+        comparisons = await prepareArtifacts(artifactRoot, body.runId, comparisons);
         const summary = summarizeComparisons(comparisons);
         await octokit.checks.update({
           owner: job.owner,
@@ -184,7 +215,8 @@ export function createServer(dependencies: ServerDependencies = {}) {
     if (!validInternalToken(request.headers.authorization)) return reply.code(401).send({ error: "unauthorized" });
     const body = request.body.value;
     const octokit = await getOctokit(body.installationId);
-    const comparisons = clusterComparisons(body.comparisons);
+    let comparisons = clusterComparisons(body.comparisons);
+    if (body.runId) comparisons = await prepareArtifacts(artifactRoot, body.runId, comparisons);
     const output = githubCheckOutput(comparisons);
     const summary = summarizeComparisons(comparisons);
     await octokit.checks.create({
@@ -203,7 +235,11 @@ export function createServer(dependencies: ServerDependencies = {}) {
   });
 
   app.post<{ Body: JsonEnvelope<PullRequestWebhook> }>("/webhooks/github", async (request, reply) => {
-    verifyWebhook(request.body.raw, request.headers["x-hub-signature-256"]);
+    try {
+      verifyWebhook(request.body.raw, request.headers["x-hub-signature-256"]);
+    } catch {
+      return reply.code(401).send({ error: "invalid webhook signature" });
+    }
     const event = request.headers["x-github-event"];
     const body = request.body.value;
     const acceptedActions = new Set(["opened", "reopened", "synchronize", "ready_for_review"]);
@@ -271,6 +307,26 @@ async function withRunStore<T>(databasePath: string, work: (store: AnyRunStore) 
   }
 }
 
+async function prepareArtifacts(root: string, runId: string, comparisons: Comparison[]): Promise<Comparison[]> {
+  const written = await writeRunArtifacts(root, runId, comparisons);
+  const publicUrl = process.env.DOWNSTREAMCI_PUBLIC_URL?.replace(/\/$/, "");
+  if (process.env.DOWNSTREAMCI_SERVE_ARTIFACTS !== "1" || !publicUrl) return written;
+  return written.map((comparison) => ({
+    ...comparison,
+    ...(comparison.artifacts
+      ? {
+          artifacts: comparison.artifacts.map((artifact) => ({
+            ...artifact,
+            url: `${publicUrl}/api/artifacts/${artifact.path
+              .split(/[\\/]/)
+              .map((segment) => encodeURIComponent(segment))
+              .join("/")}`,
+          })),
+        }
+      : {}),
+  }));
+}
+
 function workerJob(job: CoordinatorJob) {
   return {
     id: job.id,
@@ -297,7 +353,7 @@ function validInternalToken(authorization: string | undefined): boolean {
 }
 
 function sanitizeCoordinatorMessage(value: string): string {
-  return value.replace(/[\r\n]+/g, " ").slice(0, 4_000);
+  return sanitizeLog(value.replace(/[\r\n]+/g, " "), 4_000);
 }
 
 function parseLimit(value: string | undefined, fallback: number): number {
