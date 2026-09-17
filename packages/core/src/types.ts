@@ -74,6 +74,20 @@ export interface NetworkPolicy {
   mode: "none" | "bridge";
 }
 
+export interface ServiceSpec {
+  name: string;
+  image: string;
+  env?: Record<string, string>;
+  command?: string[];
+  tmpfs?: string[];
+  healthcheck?: string;
+  healthTimeoutSeconds?: number;
+  port?: number;
+  memoryMb?: number;
+  pids?: number;
+  readOnly?: boolean;
+}
+
 export interface DownstreamSpec {
   repository: string;
   ref: string;
@@ -84,7 +98,7 @@ export interface DownstreamSpec {
   timeoutSeconds?: number;
   runtime?: Record<string, string>;
   replacement?: string;
-  services?: string[];
+  services?: Array<string | ServiceSpec>;
   resources?: Partial<ResourceLimits>;
   network?: NetworkPolicy;
   env?: Record<string, string>;

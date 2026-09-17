@@ -1,6 +1,6 @@
 import type { EcosystemAdapter } from "./ecosystems.js";
 import type { PairRunner } from "./engine.js";
-import { runInDocker, type SandboxMount } from "./sandbox.js";
+import { runInDocker, startServiceStack, type SandboxMount, type ServiceStack } from "./sandbox.js";
 import type { CandidateArtifact, CommandResult, DownstreamSpec, Execution } from "./types.js";
 
 export interface LocalRunnerOptions {
@@ -22,11 +22,6 @@ export class DockerPairRunner implements PairRunner {
   }
 
   private async execute(workspace: string, spec: DownstreamSpec, candidate: boolean): Promise<Execution> {
-    if (spec.services?.length) {
-      throw new Error(
-        "Service-container orchestration is not available in the local runner yet; remove services or use a custom worker implementation.",
-      );
-    }
     const requestedStrategy = spec.replacement;
     const actualStrategy = this.options.candidate.metadata.strategy;
     if (requestedStrategy && requestedStrategy !== "auto" && requestedStrategy !== actualStrategy) {
@@ -38,45 +33,54 @@ export class DockerPairRunner implements PairRunner {
     const resourceTimeout = spec.timeoutSeconds ?? spec.resources?.timeoutSeconds;
     const resources = { ...spec.resources, ...(resourceTimeout ? { timeoutSeconds: resourceTimeout } : {}) };
     const image = this.options.image ?? "downstreamci/runner:local";
-    const network = spec.network?.mode ?? "none";
-    const env = spec.env ?? {};
     const mounts: SandboxMount[] = candidate
       ? [{ source: this.options.candidate.path, target: "/candidate", readOnly: true }]
       : [];
+    let services: ServiceStack | undefined;
+    try {
+      if (spec.services?.length) {
+        services = await startServiceStack(spec.services, { allowInternet: spec.network?.mode === "bridge" });
+      }
+      const network = services?.network ?? spec.network?.mode ?? "none";
+      const env = { ...spec.env, ...services?.environment };
+      const runtime = await probeRuntime(image, workspace, spec, mounts, resources);
+      if (runtime.failure) return failedSetup(runtime.failure, runtime.environment);
 
-    const runtime = await probeRuntime(image, workspace, spec, mounts, resources);
-    if (runtime.failure) return failedSetup(runtime.failure, runtime.environment);
+      const setupCommands = spec.setup ? [spec.setup] : await this.options.adapter.setupCommands();
+      const setupCommand = setupCommands.filter(Boolean).join(" && ");
+      const setup = setupCommand
+        ? await runInDocker({ image, workspace, command: setupCommand, env, network, resources, mounts, kind: "setup" })
+        : undefined;
+      if (setup && setup.exitCode !== 0) return failedSetup(setup, runtime.environment);
 
-    const setupCommands = spec.setup ? [spec.setup] : await this.options.adapter.setupCommands();
-    const setupCommand = setupCommands.filter(Boolean).join(" && ");
-    const setup = setupCommand
-      ? await runInDocker({ image, workspace, command: setupCommand, env, network, resources, mounts, kind: "setup" })
-      : undefined;
-    if (setup && setup.exitCode !== 0) return failedSetup(setup, runtime.environment);
+      if (candidate) {
+        const injection = await this.options.adapter.injectionCommands(this.options.candidate, "/candidate");
+        const injected = await runInDocker({
+          image,
+          workspace,
+          command: injection.join(" && "),
+          env,
+          network,
+          resources,
+          mounts,
+          kind: "setup",
+        });
+        if (injected.exitCode !== 0) return failedSetup(injected, runtime.environment);
+      }
 
-    if (candidate) {
-      const injection = await this.options.adapter.injectionCommands(this.options.candidate, "/candidate");
-      const injected = await runInDocker({
-        image,
-        workspace,
-        command: injection.join(" && "),
-        env,
-        network,
-        resources,
-        mounts,
-        kind: "setup",
-      });
-      if (injected.exitCode !== 0) return failedSetup(injected, runtime.environment);
+      const command = [spec.build, spec.test].filter(Boolean).join(" && ");
+      const attempts: CommandResult[] = [];
+      for (let attempt = 0; attempt < (this.options.retries ?? 1); attempt += 1) {
+        attempts.push(await runInDocker({ image, workspace, command, env, network, resources, mounts, kind: "test" }));
+      }
+      const test = attempts.at(-1);
+      if (!test) throw new Error("runner produced no test attempt");
+      return { ...(setup ? { setup } : {}), test, attempts, environment: { ...runtime.environment, ...serviceEnvironment(services) } };
+    } catch (error) {
+      return failedSetup(serviceSetupFailure(error), {});
+    } finally {
+      await services?.cleanup();
     }
-
-    const command = [spec.build, spec.test].filter(Boolean).join(" && ");
-    const attempts: CommandResult[] = [];
-    for (let attempt = 0; attempt < (this.options.retries ?? 1); attempt += 1) {
-      attempts.push(await runInDocker({ image, workspace, command, env, network, resources, mounts, kind: "test" }));
-    }
-    const test = attempts.at(-1);
-    if (!test) throw new Error("runner produced no test attempt");
-    return { ...(setup ? { setup } : {}), test, attempts, environment: runtime.environment };
   }
 }
 
@@ -138,6 +142,22 @@ async function probeRuntime(
     }
   }
   return { environment };
+}
+
+function serviceEnvironment(services: ServiceStack | undefined): Record<string, string> {
+  return services?.environment ?? {};
+}
+
+function serviceSetupFailure(error: unknown): CommandResult {
+  return {
+    command: "service-container setup",
+    exitCode: 1,
+    stdout: "",
+    stderr: error instanceof Error ? error.message : String(error),
+    durationMs: 0,
+    timedOut: false,
+    kind: "setup",
+  };
 }
 
 function failedSetup(setup: CommandResult, environment: Record<string, string>): Execution {
