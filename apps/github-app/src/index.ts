@@ -1,12 +1,15 @@
-import { createHmac, createSign, timingSafeEqual } from "node:crypto";
+import { createHmac, createSign, randomUUID, timingSafeEqual } from "node:crypto";
 import { resolve } from "node:path";
 import { Octokit } from "@octokit/rest";
 import {
+  CoordinatorJobStore,
   PostgresRunStore,
   RunStore,
+  clusterComparisons,
   githubCheckOutput,
   summarizeComparisons,
   type Comparison,
+  type CoordinatorJob,
 } from "@downstreamci/core";
 import Fastify from "fastify";
 
@@ -33,10 +36,31 @@ interface PullRequestWebhook {
   pull_request?: { number?: number; head?: { sha?: string } };
 }
 
+interface ClaimRequest {
+  workerId?: string;
+  leaseSeconds?: number;
+}
+
+interface CompleteRequest {
+  runId?: string;
+  upstream?: string;
+  ref?: string;
+  comparisons?: Comparison[];
+  error?: string;
+}
+
+export interface ServerDependencies {
+  getOctokit?: (installationId?: number) => Promise<Octokit>;
+  databasePath?: string;
+}
+
 type AnyRunStore = RunStore | PostgresRunStore;
 
-export function createServer() {
+export function createServer(dependencies: ServerDependencies = {}) {
   const app = Fastify({ logger: true, bodyLimit: 2_000_000 });
+  const getOctokit = dependencies.getOctokit ?? installationClient;
+  const databasePath = dependencies.databasePath ?? resolve(process.env.DOWNSTREAMCI_DB ?? ".downstreamci/downstreamci.db");
+
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (_request, body, done) => {
     try {
       const raw = body.toString("utf8");
@@ -50,19 +74,85 @@ export function createServer() {
 
   app.get<{ Querystring: { limit?: string } }>("/api/runs/latest", async (request) => {
     const limit = parseLimit(request.query.limit, 20);
-    return { runs: await withRunStore((store) => store.latest(limit)) };
+    return { runs: await withRunStore(databasePath, (store) => store.latest(limit)) };
   });
 
   app.get<{ Querystring: { limit?: string } }>("/api/signals", async (request) => {
     const limit = parseLimit(request.query.limit, 100);
-    return { signals: await withRunStore((store) => store.signals(limit)) };
+    return { signals: await withRunStore(databasePath, (store) => store.signals(limit)) };
   });
 
+  app.post<{ Body: JsonEnvelope<ClaimRequest> }>("/internal/jobs/claim", async (request, reply) => {
+    if (!validInternalToken(request.headers.authorization)) return reply.code(401).send({ error: "unauthorized" });
+    const workerId = request.body.value.workerId?.trim();
+    if (!workerId) return reply.code(400).send({ error: "workerId is required" });
+    const store = new CoordinatorJobStore(databasePath);
+    try {
+      const job = store.claim(workerId, request.body.value.leaseSeconds ?? 900);
+      if (!job) return reply.code(204).send();
+      return reply.send({ job: workerJob(job) });
+    } finally {
+      store.close();
+    }
+  });
+
+  app.post<{ Params: { id: string }; Body: JsonEnvelope<CompleteRequest> }>(
+    "/internal/jobs/:id/complete",
+    async (request, reply) => {
+      if (!validInternalToken(request.headers.authorization)) return reply.code(401).send({ error: "unauthorized" });
+      const jobs = new CoordinatorJobStore(databasePath);
+      try {
+        const job = jobs.get(request.params.id);
+        if (!job) return reply.code(404).send({ error: "unknown job" });
+        if (job.status !== "running") return reply.code(409).send({ error: `job is ${job.status}` });
+
+        const body = request.body.value;
+        const octokit = await getOctokit(job.installationId);
+        if (body.error) {
+          await octokit.checks.update({
+            owner: job.owner,
+            repo: job.repo,
+            check_run_id: job.checkRunId,
+            status: "completed",
+            conclusion: "neutral",
+            output: {
+              title: "DownstreamCI execution could not complete",
+              summary: sanitizeCoordinatorMessage(body.error),
+            },
+          });
+          jobs.finish(job.id, "failed");
+          return reply.send({ ok: false, status: "failed" });
+        }
+
+        if (!body.comparisons || !body.runId || !body.upstream || !body.ref) {
+          return reply.code(400).send({ error: "runId, upstream, ref, and comparisons are required" });
+        }
+        const comparisons = clusterComparisons(body.comparisons);
+        const summary = summarizeComparisons(comparisons);
+        await octokit.checks.update({
+          owner: job.owner,
+          repo: job.repo,
+          check_run_id: job.checkRunId,
+          status: "completed",
+          conclusion: summary.conclusion,
+          output: githubCheckOutput(comparisons),
+        });
+        await withRunStore(databasePath, (store) => store.save(body.runId as string, body.upstream as string, body.ref as string, comparisons));
+        jobs.finish(job.id, "completed");
+        return reply.send({ ok: true, conclusion: summary.conclusion });
+      } finally {
+        jobs.close();
+      }
+    },
+  );
+
   app.post<{ Body: JsonEnvelope<CheckRequest> }>("/internal/checks", async (request, reply) => {
+    if (!validInternalToken(request.headers.authorization)) return reply.code(401).send({ error: "unauthorized" });
     const body = request.body.value;
-    const octokit = await installationClient(body.installationId);
-    const output = githubCheckOutput(body.comparisons);
-    const summary = summarizeComparisons(body.comparisons);
+    const octokit = await getOctokit(body.installationId);
+    const comparisons = clusterComparisons(body.comparisons);
+    const output = githubCheckOutput(comparisons);
+    const summary = summarizeComparisons(comparisons);
     await octokit.checks.create({
       owner: body.owner,
       repo: body.repo,
@@ -73,7 +163,7 @@ export function createServer() {
       output,
     });
     if (body.runId && body.upstream && body.ref) {
-      await withRunStore((store) => store.save(body.runId as string, body.upstream as string, body.ref as string, body.comparisons));
+      await withRunStore(databasePath, (store) => store.save(body.runId as string, body.upstream as string, body.ref as string, comparisons));
     }
     return reply.send({ ok: true, conclusion: summary.conclusion });
   });
@@ -96,7 +186,7 @@ export function createServer() {
       return reply.code(400).send({ error: "incomplete pull_request webhook payload" });
     }
 
-    const octokit = await installationClient(installationId);
+    const octokit = await getOctokit(installationId);
     const check = await octokit.checks.create({
       owner,
       repo,
@@ -108,29 +198,66 @@ export function createServer() {
         summary: `Pull request #${pullNumber} will be compared against approved downstream projects.`,
       },
     });
-
-    return reply.code(202).send({
-      accepted: true,
-      trigger: { owner, repo, headSha, pullNumber, installationId, checkRunId: check.data.id },
-    });
+    const jobs = new CoordinatorJobStore(databasePath);
+    try {
+      const job = jobs.enqueue({
+        id: randomUUID(),
+        owner,
+        repo,
+        headSha,
+        pullNumber,
+        installationId,
+        checkRunId: check.data.id,
+      });
+      return reply.code(202).send({ accepted: true, job: workerJob(job) });
+    } finally {
+      jobs.close();
+    }
   });
 
   return app;
 }
 
-function createRunStore(): AnyRunStore {
+function createRunStore(databasePath: string): AnyRunStore {
   const databaseUrl = process.env.DOWNSTREAMCI_DATABASE_URL ?? process.env.DATABASE_URL;
   if (databaseUrl) return new PostgresRunStore(databaseUrl);
-  return new RunStore(resolve(process.env.DOWNSTREAMCI_DB ?? ".downstreamci/downstreamci.db"));
+  return new RunStore(databasePath);
 }
 
-async function withRunStore<T>(work: (store: AnyRunStore) => T | Promise<T>): Promise<T> {
-  const store = createRunStore();
+async function withRunStore<T>(databasePath: string, work: (store: AnyRunStore) => T | Promise<T>): Promise<T> {
+  const store = createRunStore(databasePath);
   try {
     return await work(store);
   } finally {
     await store.close();
   }
+}
+
+function workerJob(job: CoordinatorJob) {
+  return {
+    id: job.id,
+    owner: job.owner,
+    repo: job.repo,
+    headSha: job.headSha,
+    pullNumber: job.pullNumber,
+    status: job.status,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    ...(job.leaseUntil === undefined ? {} : { leaseUntil: job.leaseUntil }),
+  };
+}
+
+function validInternalToken(authorization: string | undefined): boolean {
+  const expected = process.env.DOWNSTREAMCI_INTERNAL_TOKEN;
+  if (!expected || !authorization?.startsWith("Bearer ")) return false;
+  const provided = authorization.slice("Bearer ".length);
+  const a = Buffer.from(expected);
+  const b = Buffer.from(provided);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function sanitizeCoordinatorMessage(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").slice(0, 4_000);
 }
 
 function parseLimit(value: string | undefined, fallback: number): number {
