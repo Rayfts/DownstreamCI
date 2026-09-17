@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getHarness } from "./harnesses.js";
@@ -20,6 +20,32 @@ export interface AgentAnalysis {
   raw: string;
   label: "ANALYSIS";
 }
+
+const MODEL_ENV_KEYS = [
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "OPENAI_ORG_ID",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_BASE_URL",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_GENAI_USE_VERTEXAI",
+  "GOOGLE_CLOUD_PROJECT",
+  "GOOGLE_CLOUD_LOCATION",
+  "OPENROUTER_API_KEY",
+  "MISTRAL_API_KEY",
+  "GROQ_API_KEY",
+  "XAI_API_KEY",
+  "COHERE_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "TOGETHER_API_KEY",
+  "AZURE_OPENAI_API_KEY",
+  "AZURE_OPENAI_ENDPOINT",
+  "GOOSE_PROVIDER",
+  "GOOSE_MODEL",
+  "GOOSE_API_KEY",
+  "AIDER_MODEL",
+] as const;
 
 export function buildAnalysisPrompt(context: AnalysisContext): string {
   return [
@@ -86,6 +112,35 @@ export function buildSemanticClusterPrompt(comparisons: Comparison[]): string {
   ].join("\n");
 }
 
+export function buildAgentEnvironment(analysisRoot: string): Record<string, string> {
+  const home = join(analysisRoot, "home");
+  const environment: Record<string, string> = {
+    HOME: home,
+    USERPROFILE: home,
+    XDG_CONFIG_HOME: join(analysisRoot, "config"),
+    XDG_CACHE_HOME: join(analysisRoot, "cache"),
+    TMPDIR: join(analysisRoot, "tmp"),
+    TEMP: join(analysisRoot, "tmp"),
+    TMP: join(analysisRoot, "tmp"),
+  };
+  const path = process.env.PATH ?? process.env.Path;
+  if (path) environment.PATH = path;
+  for (const key of ["LANG", "LC_ALL", "SYSTEMROOT"] as const) {
+    const value = process.env[key];
+    if (value) environment[key] = value;
+  }
+  for (const key of MODEL_ENV_KEYS) {
+    const value = process.env[key];
+    if (value) environment[key] = value;
+  }
+  for (const key of (process.env.DOWNSTREAMCI_AGENT_ENV_ALLOWLIST ?? "").split(",").map((item) => item.trim()).filter(Boolean)) {
+    if (forbiddenAgentEnvironmentKey(key)) continue;
+    const value = process.env[key];
+    if (value) environment[key] = value;
+  }
+  return environment;
+}
+
 export async function analyzeFailure(harnessId: string, context: AnalysisContext): Promise<AgentAnalysis> {
   return runHarnessAnalysis(harnessId, buildAnalysisPrompt(context));
 }
@@ -103,9 +158,16 @@ async function runHarnessAnalysis(harnessId: string, prompt: string): Promise<Ag
 
   const analysisDir = await mkdtemp(join(tmpdir(), "downstreamci-analysis-"));
   try {
+    await Promise.all(
+      ["home", "config", "cache", "tmp"].map((directory) =>
+        mkdir(join(analysisDir, directory), { recursive: true, mode: 0o700 }),
+      ),
+    );
     await writeFile(join(analysisDir, "EVIDENCE.txt"), prompt, { mode: 0o600 });
     const result = await runProcess(invocation.command, invocation.args, {
       cwd: analysisDir,
+      env: buildAgentEnvironment(analysisDir),
+      inheritEnv: false,
       timeoutSeconds: 600,
       maxOutputBytes: 2 * 1024 * 1024,
     });
@@ -114,4 +176,15 @@ async function runHarnessAnalysis(harnessId: string, prompt: string): Promise<Ag
   } finally {
     await rm(analysisDir, { recursive: true, force: true });
   }
+}
+
+function forbiddenAgentEnvironmentKey(key: string): boolean {
+  return (
+    key.startsWith("DOWNSTREAMCI_") ||
+    key.startsWith("GITHUB_") ||
+    key === "GH_TOKEN" ||
+    key === "NPM_TOKEN" ||
+    key.startsWith("AWS_") ||
+    /(?:PASSWORD|PRIVATE_KEY|SECRET)$/i.test(key)
+  );
 }
