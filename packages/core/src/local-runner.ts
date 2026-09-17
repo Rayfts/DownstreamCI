@@ -75,7 +75,12 @@ export class DockerPairRunner implements PairRunner {
       }
       const test = attempts.at(-1);
       if (!test) throw new Error("runner produced no test attempt");
-      return { ...(setup ? { setup } : {}), test, attempts, environment: { ...runtime.environment, ...serviceEnvironment(services) } };
+      return {
+        ...(setup ? { setup } : {}),
+        test,
+        attempts,
+        environment: { ...runtime.environment, ...serviceEnvironment(services) },
+      };
     } catch (error) {
       return failedSetup(serviceSetupFailure(error), {});
     } finally {
@@ -161,6 +166,6 @@ function serviceSetupFailure(error: unknown): CommandResult {
 }
 
 function failedSetup(setup: CommandResult, environment: Record<string, string>): Execution {
-  const failure = { ...setup, kind: "setup" as const };
+  const failure = setup.kind === "infrastructure" ? setup : { ...setup, kind: "setup" as const };
   return { setup: failure, test: failure, attempts: [failure], environment };
 }
