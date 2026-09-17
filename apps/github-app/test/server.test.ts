@@ -9,10 +9,14 @@ import { createServer } from "../src/index.js";
 const cleanup: string[] = [];
 const originalWebhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
 const originalInternalToken = process.env.DOWNSTREAMCI_INTERNAL_TOKEN;
+const originalServeArtifacts = process.env.DOWNSTREAMCI_SERVE_ARTIFACTS;
+const originalPublicUrl = process.env.DOWNSTREAMCI_PUBLIC_URL;
 
 afterEach(async () => {
   process.env.GITHUB_WEBHOOK_SECRET = originalWebhookSecret;
   process.env.DOWNSTREAMCI_INTERNAL_TOKEN = originalInternalToken;
+  process.env.DOWNSTREAMCI_SERVE_ARTIFACTS = originalServeArtifacts;
+  process.env.DOWNSTREAMCI_PUBLIC_URL = originalPublicUrl;
   await Promise.all(cleanup.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -28,6 +32,7 @@ describe("GitHub coordinator", () => {
     };
     const app = createServer({
       databasePath: join(directory, "coordinator.db"),
+      artifactRoot: join(directory, "artifacts"),
       getOctokit: async () => ({ checks } as unknown as Octokit),
     });
     const payload = JSON.stringify({
@@ -120,10 +125,11 @@ describe("GitHub coordinator", () => {
     });
     expect(completed.statusCode).toBe(200);
     expect(checks.update).toHaveBeenCalledOnce();
+    expect(checks.update.mock.calls[0]?.[0]).toMatchObject({ conclusion: "neutral" });
     await app.close();
   });
 
-  it("rejects an invalid webhook signature", async () => {
+  it("rejects an invalid webhook signature with 401", async () => {
     process.env.GITHUB_WEBHOOK_SECRET = "webhook-secret";
     const app = createServer({ getOctokit: async () => ({ checks: {} } as unknown as Octokit) });
     const response = await app.inject({
@@ -132,7 +138,7 @@ describe("GitHub coordinator", () => {
       headers: { "content-type": "application/json", "x-github-event": "pull_request", "x-hub-signature-256": "sha256=bad" },
       payload: JSON.stringify({ action: "opened" }),
     });
-    expect(response.statusCode).toBe(500);
+    expect(response.statusCode).toBe(401);
     await app.close();
   });
 });
