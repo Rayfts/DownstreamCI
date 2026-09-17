@@ -72,7 +72,11 @@ export function githubCheckOutput(comparisons: Comparison[]): { title: string; s
     "",
     "## Counts",
     ...(countLines.length ? countLines : ["- No downstream results were produced."]),
-    evidence ? `\n## Evidence\n\n${evidence}` : comparisons.length ? "\nAll approved downstream comparisons were unaffected." : "\nNo usable downstream comparisons were produced; the Check is neutral.",
+    evidence
+      ? `\n## Evidence\n\n${evidence}`
+      : comparisons.length
+        ? "\nAll approved downstream comparisons were unaffected."
+        : "\nNo usable downstream comparisons were produced; the Check is neutral.",
   ].join("\n");
   return {
     title: summary.title.slice(0, 255),
@@ -126,15 +130,17 @@ function sanitizeCommandResult(result: CommandResult): CommandResult {
 function renderEvidence(item: Comparison, index: number): string {
   const name = item.downstream?.repository ?? `downstream-${index + 1}`;
   const artifacts = item.artifacts?.length
-    ? [
-        "**Artifacts**",
-        ...item.artifacts.map(
-          (artifact) => `- \`${artifact.kind}\`: \`${artifact.path}\` (${artifact.bytes} bytes, sha256 \`${artifact.sha256}\`)`,
-        ),
-      ].join("\n")
+    ? ["**Artifacts**", ...item.artifacts.map(renderArtifactReference)].join("\n")
     : "";
   const runtime = Object.keys(item.candidate.environment).length
-    ? ["<details><summary>Runtime environment</summary>", "", "```json", sanitizeLog(JSON.stringify(item.candidate.environment, null, 2), 4_000), "```", "</details>"].join("\n")
+    ? [
+        "<details><summary>Runtime environment</summary>",
+        "",
+        "```json",
+        sanitizeLog(JSON.stringify(item.candidate.environment, null, 2), 4_000),
+        "```",
+        "</details>",
+      ].join("\n")
     : "";
   return [
     `### ${markdownCell(name)} — \`${item.classification}\``,
@@ -144,7 +150,9 @@ function renderEvidence(item: Comparison, index: number): string {
     item.expectedFlakeMatch ? `Expected-flake match: \`${markdownCell(item.expectedFlakeMatch)}\`` : "",
     item.baselineSignature ? `Baseline signature: \`${item.baselineSignature}\`` : "",
     item.candidateSignature ? `Candidate signature: \`${item.candidateSignature}\`` : "",
-    item.cluster ? `Cluster: \`${item.cluster.id}\` (${item.cluster.members} member${item.cluster.members === 1 ? "" : "s"}) — ${markdownCell(item.cluster.label)}` : "",
+    item.cluster
+      ? `Cluster: \`${item.cluster.id}\` (${item.cluster.members} member${item.cluster.members === 1 ? "" : "s"}) — ${markdownCell(item.cluster.label)}`
+      : "",
     artifacts,
     item.analysis ? `**ANALYSIS (${item.analysis.harness})**\n\n${sanitizeLog(item.analysis.raw, 4_000)}` : "",
     runtime,
@@ -163,6 +171,14 @@ function renderEvidence(item: Comparison, index: number): string {
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function renderArtifactReference(artifact: NonNullable<Comparison["artifacts"]>[number]): string {
+  const integrity = `${artifact.bytes} bytes, sha256 \`${artifact.sha256}\``;
+  if (artifact.url && /^https?:\/\//.test(artifact.url)) {
+    return `- [${artifact.kind}](${artifact.url}) — ${integrity}`;
+  }
+  return `- \`${artifact.kind}\`: \`${artifact.path}\` (${integrity})`;
 }
 
 function outcome(execution: Comparison["baseline"]): string {
