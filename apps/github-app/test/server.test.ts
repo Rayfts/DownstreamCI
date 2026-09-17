@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 describe("GitHub coordinator", () => {
-  it("verifies webhooks and enforces worker-owned renewable leases", async () => {
+  it("queues trusted base policy plus PR head metadata and enforces worker-owned renewable leases", async () => {
     process.env.GITHUB_WEBHOOK_SECRET = "webhook-secret";
     process.env.DOWNSTREAMCI_INTERNAL_TOKEN = "internal-secret";
     const directory = await mkdtemp(join(tmpdir(), "downstreamci-github-app-"));
@@ -34,7 +34,11 @@ describe("GitHub coordinator", () => {
       action: "opened",
       installation: { id: 12 },
       repository: { name: "library", owner: { login: "org" } },
-      pull_request: { number: 7, head: { sha: "abc123" } },
+      pull_request: {
+        number: 7,
+        head: { sha: "abc123", repo: { full_name: "contributor/library" } },
+        base: { sha: "base456" },
+      },
     });
     const signature = `sha256=${createHmac("sha256", "webhook-secret").update(payload).digest("hex")}`;
 
@@ -62,10 +66,14 @@ describe("GitHub coordinator", () => {
       payload: JSON.stringify({ workerId: "worker-1", leaseSeconds: 120 }),
     });
     expect(claimed.statusCode).toBe(200);
-    const body = claimed.json() as { job: { id: string; owner: string; repo: string; headSha: string } };
+    const body = claimed.json() as {
+      job: { id: string; owner: string; repo: string; headRepository: string; headSha: string; baseSha: string };
+    };
     expect(body.job.owner).toBe("org");
     expect(body.job.repo).toBe("library");
+    expect(body.job.headRepository).toBe("contributor/library");
     expect(body.job.headSha).toBe("abc123");
+    expect(body.job.baseSha).toBe("base456");
 
     const wrongRenewal = await app.inject({
       method: "POST",

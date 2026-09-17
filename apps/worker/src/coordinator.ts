@@ -12,7 +12,9 @@ interface WorkerJob {
   id: string;
   owner: string;
   repo: string;
+  headRepository?: string;
   headSha: string;
+  baseSha?: string;
   pullNumber: number;
 }
 
@@ -63,12 +65,16 @@ async function executeJob(
   job: WorkerJob,
   config: CoordinatorConfig,
 ): Promise<{ runId: string; upstream: string; ref: string; comparisons: Comparison[] }> {
+  if (!job.baseSha) throw new Error("Coordinator job has no trusted PR base SHA; refusing head-controlled policy");
+  if (!job.headRepository) throw new Error("Coordinator job has no PR head repository");
+
   const workspaceRoot = await workerRoot();
   const temporary = await mkdtemp(join(workspaceRoot, "coordinator-job-"));
   try {
     const upstreamName = `${job.owner}/${job.repo}`;
-    const upstream = await checkoutRepository(upstreamName, job.headSha, temporary, "upstream");
-    const downstreamConfig = await loadConfig(join(upstream, ".downstreamci.yml"));
+    const upstream = await checkoutRepository(job.headRepository, job.headSha, temporary, "upstream");
+    const policy = await checkoutRepository(upstreamName, job.baseSha, temporary, "policy");
+    const downstreamConfig = await loadConfig(join(policy, ".downstreamci.yml"));
     const comparisons = await executeConfiguredPipeline(upstream, downstreamConfig, {
       runnerImage: config.runnerImage,
       retries: config.retries,

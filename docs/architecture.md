@@ -28,8 +28,8 @@ GitHub pull_request webhook
         v
 apps/github-app
   verify HMAC signature
+  persist head repo/SHA + base SHA
   create queued Check Run
-  persist durable SQLite job
         |
         v
 authenticated worker lease
@@ -37,7 +37,8 @@ authenticated worker lease
         |
         v
 apps/worker coordinator loop
-  trusted-host PR checkout
+  candidate checkout from PR head
+  policy checkout from trusted base SHA
   core deterministic pipeline
   untrusted downstreams in Docker
         |
@@ -47,7 +48,7 @@ owner-checked completion endpoint
   persist SQLite/PostgreSQL history
 ```
 
-The webhook process never executes arbitrary repository code. A worker may publish completion only while it still owns a live lease; expired work can be reclaimed without allowing stale completion to overwrite the new owner's result.
+The webhook process never executes arbitrary repository code. Distributed execution deliberately separates **candidate source** from **execution policy**: `.downstreamci.yml` comes from the base SHA, not the PR head. A worker may publish completion only while it still owns a live lease.
 
 ## Trust boundaries
 
@@ -55,7 +56,7 @@ The webhook process never executes arbitrary repository code. A worker may publi
 
 `apps/github-app` owns GitHub webhook verification, installation-scoped credentials, Check publication, the authenticated queue API, and run/signal APIs.
 
-`apps/worker` constrains direct execution requests to `DOWNSTREAMCI_WORKSPACE_ROOT`. Its coordinator mode checks out the upstream on the trusted host, then delegates downstream setup/build/tests to the Docker sandbox.
+`apps/worker` constrains direct execution requests to `DOWNSTREAMCI_WORKSPACE_ROOT`. Its coordinator mode uses a base-revision policy checkout and delegates downstream setup/build/tests to the Docker sandbox.
 
 The generic test container receives only explicitly configured environment values. It receives no GitHub credential, SSH key, production secret, or host Docker socket.
 
@@ -71,7 +72,7 @@ Optional service containers use a dedicated Docker network, no host port mapping
 
 - **SQLite** is the default local run-history store.
 - **PostgreSQL** is available through `PostgresRunStore` when `DOWNSTREAMCI_DATABASE_URL` or `DATABASE_URL` is configured by the GitHub service.
-- **Coordinator jobs** are stored durably in SQLite with worker-owned renewable leases; expired leases can be reclaimed safely because stale workers cannot complete them.
+- **Coordinator jobs** are stored durably in SQLite with candidate/base provenance and worker-owned renewable leases.
 - **Artifacts** are local sanitized/checksummed files under `.downstreamci/artifacts/<run-id>/` in local CLI mode.
 
 Object storage is intentionally an extension point: the comparison contract stores artifact references rather than requiring a proprietary storage service.

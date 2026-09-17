@@ -2,20 +2,24 @@ import { describe, expect, it } from "vitest";
 import { CoordinatorJobStore } from "../src/jobs.js";
 
 describe("CoordinatorJobStore", () => {
-  it("durably queues, renews, ownership-checks, and completes jobs", () => {
+  it("durably queues trusted base metadata, renews leases, and ownership-checks completion", () => {
     const store = new CoordinatorJobStore(":memory:");
     try {
       store.enqueue({
         id: "job-1",
         owner: "org",
         repo: "project",
+        headRepository: "contributor/project",
         headSha: "abc",
+        baseSha: "def",
         pullNumber: 7,
         installationId: 11,
         checkRunId: 13,
       });
       const claimed = store.claim("worker-a", 120);
       expect(claimed?.id).toBe("job-1");
+      expect(claimed?.headRepository).toBe("contributor/project");
+      expect(claimed?.baseSha).toBe("def");
       expect(claimed?.status).toBe("running");
       expect(claimed?.workerId).toBe("worker-a");
       expect(store.claim("worker-b", 120)).toBeNull();

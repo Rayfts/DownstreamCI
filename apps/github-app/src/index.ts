@@ -33,7 +33,11 @@ interface PullRequestWebhook {
   action?: string;
   installation?: { id?: number };
   repository?: { name?: string; owner?: { login?: string } };
-  pull_request?: { number?: number; head?: { sha?: string } };
+  pull_request?: {
+    number?: number;
+    head?: { sha?: string; repo?: { full_name?: string } };
+    base?: { sha?: string };
+  };
 }
 
 interface WorkerLeaseRequest {
@@ -209,10 +213,12 @@ export function createServer(dependencies: ServerDependencies = {}) {
 
     const owner = body.repository?.owner?.login;
     const repo = body.repository?.name;
+    const headRepository = body.pull_request?.head?.repo?.full_name;
     const headSha = body.pull_request?.head?.sha;
+    const baseSha = body.pull_request?.base?.sha;
     const pullNumber = body.pull_request?.number;
     const installationId = body.installation?.id;
-    if (!owner || !repo || !headSha || !pullNumber || !installationId) {
+    if (!owner || !repo || !headRepository || !headSha || !baseSha || !pullNumber || !installationId) {
       return reply.code(400).send({ error: "incomplete pull_request webhook payload" });
     }
 
@@ -225,7 +231,7 @@ export function createServer(dependencies: ServerDependencies = {}) {
       status: "queued",
       output: {
         title: "Queued for downstream compatibility testing",
-        summary: `Pull request #${pullNumber} will be compared against approved downstream projects.`,
+        summary: `Pull request #${pullNumber} will use the trusted base configuration at ${baseSha.slice(0, 12)}.`,
       },
     });
     const jobs = new CoordinatorJobStore(databasePath);
@@ -234,7 +240,9 @@ export function createServer(dependencies: ServerDependencies = {}) {
         id: randomUUID(),
         owner,
         repo,
+        headRepository,
         headSha,
+        baseSha,
         pullNumber,
         installationId,
         checkRunId: check.data.id,
@@ -268,7 +276,9 @@ function workerJob(job: CoordinatorJob) {
     id: job.id,
     owner: job.owner,
     repo: job.repo,
+    ...(job.headRepository ? { headRepository: job.headRepository } : {}),
     headSha: job.headSha,
+    ...(job.baseSha ? { baseSha: job.baseSha } : {}),
     pullNumber: job.pullNumber,
     status: job.status,
     createdAt: job.createdAt,

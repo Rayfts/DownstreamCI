@@ -8,13 +8,17 @@ export interface CoordinatorJobInput {
   id: string;
   owner: string;
   repo: string;
+  headRepository: string;
   headSha: string;
+  baseSha: string;
   pullNumber: number;
   installationId: number;
   checkRunId: number;
 }
 
-export interface CoordinatorJob extends CoordinatorJobInput {
+export interface CoordinatorJob extends Omit<CoordinatorJobInput, "headRepository" | "baseSha"> {
+  headRepository?: string;
+  baseSha?: string;
   status: CoordinatorJobStatus;
   createdAt: number;
   updatedAt: number;
@@ -26,7 +30,9 @@ interface JobRow {
   id: string;
   owner: string;
   repo: string;
+  head_repository: string | null;
   head_sha: string;
+  base_sha: string | null;
   pull_number: number;
   installation_id: number;
   check_run_id: number;
@@ -49,7 +55,9 @@ export class CoordinatorJobStore {
         id TEXT PRIMARY KEY,
         owner TEXT NOT NULL,
         repo TEXT NOT NULL,
+        head_repository TEXT,
         head_sha TEXT NOT NULL,
+        base_sha TEXT,
         pull_number INTEGER NOT NULL,
         installation_id INTEGER NOT NULL,
         check_run_id INTEGER NOT NULL,
@@ -62,6 +70,8 @@ export class CoordinatorJobStore {
       CREATE INDEX IF NOT EXISTS coordinator_jobs_claim_idx
         ON coordinator_jobs(status, lease_until, created_at);
     `);
+    this.ensureColumn("head_repository", "TEXT");
+    this.ensureColumn("base_sha", "TEXT");
   }
 
   enqueue(input: CoordinatorJobInput): CoordinatorJob {
@@ -69,15 +79,17 @@ export class CoordinatorJobStore {
     this.sqlite
       .prepare(`
         INSERT INTO coordinator_jobs (
-          id, owner, repo, head_sha, pull_number, installation_id, check_run_id,
-          status, created_at, updated_at, worker_id, lease_until
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, NULL, NULL)
+          id, owner, repo, head_repository, head_sha, base_sha, pull_number,
+          installation_id, check_run_id, status, created_at, updated_at, worker_id, lease_until
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, NULL, NULL)
       `)
       .run(
         input.id,
         input.owner,
         input.repo,
+        input.headRepository,
         input.headSha,
+        input.baseSha,
         input.pullNumber,
         input.installationId,
         input.checkRunId,
@@ -171,6 +183,13 @@ export class CoordinatorJobStore {
   close(): void {
     this.sqlite.close();
   }
+
+  private ensureColumn(name: "head_repository" | "base_sha", type: "TEXT"): void {
+    const columns = this.sqlite.prepare("PRAGMA table_info(coordinator_jobs)").all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === name)) {
+      this.sqlite.exec(`ALTER TABLE coordinator_jobs ADD COLUMN ${name} ${type}`);
+    }
+  }
 }
 
 function boundedLeaseSeconds(value: number): number {
@@ -182,7 +201,9 @@ function fromRow(row: JobRow): CoordinatorJob {
     id: row.id,
     owner: row.owner,
     repo: row.repo,
+    ...(row.head_repository ? { headRepository: row.head_repository } : {}),
     headSha: row.head_sha,
+    ...(row.base_sha ? { baseSha: row.base_sha } : {}),
     pullNumber: row.pull_number,
     installationId: row.installation_id,
     checkRunId: row.check_run_id,
