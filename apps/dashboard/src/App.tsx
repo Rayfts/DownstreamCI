@@ -41,7 +41,18 @@ type HistorySignals = {
   runtimes: Record<string, Record<string, number>>;
 };
 
-type View = "matrix" | "failures" | "clusters" | "artifacts" | "logs" | "analysis" | "runtime" | "history";
+type View =
+  | "runs"
+  | "matrix"
+  | "projects"
+  | "failures"
+  | "clusters"
+  | "artifacts"
+  | "logs"
+  | "analysis"
+  | "runtime"
+  | "history"
+  | "flakiness";
 
 export function App() {
   const [runs, setRuns] = useState<StoredRun[]>([]);
@@ -52,7 +63,10 @@ export function App() {
 
   useEffect(() => {
     const base = import.meta.env.VITE_API_BASE ?? "";
-    Promise.all([fetchJson<{ runs: StoredRun[] }>(`${base}/api/runs/latest?limit=30`), fetchJson<{ signals: HistorySignals }>(`${base}/api/signals?limit=100`)])
+    Promise.all([
+      fetchJson<{ runs: StoredRun[] }>(`${base}/api/runs/latest?limit=30`),
+      fetchJson<{ signals: HistorySignals }>(`${base}/api/signals?limit=100`),
+    ])
       .then(([runData, signalData]) => {
         setRuns(runData.runs);
         setSignals(signalData.signals);
@@ -131,13 +145,15 @@ export function App() {
             <article><strong>{counts["newly-broken"] ?? 0}</strong><span>newly-broken</span></article>
           </section>
           <nav className="tabs">
-            {(["matrix", "failures", "clusters", "artifacts", "logs", "analysis", "runtime", "history"] as View[]).map((item) => (
+            {(["runs", "matrix", "projects", "failures", "clusters", "artifacts", "logs", "analysis", "runtime", "history", "flakiness"] as View[]).map((item) => (
               <button type="button" className={view === item ? "active" : ""} onClick={() => setView(item)} key={item}>
                 {item}
               </button>
             ))}
           </nav>
+          {view === "runs" ? <Runs runs={runs} selectedId={run.id} onSelect={setSelectedId} /> : null}
           {view === "matrix" ? <Matrix comparisons={run.comparisons} /> : null}
+          {view === "projects" ? <Projects comparisons={run.comparisons} /> : null}
           {view === "failures" ? <Failures comparisons={run.comparisons} /> : null}
           {view === "clusters" ? <Clusters comparisons={run.comparisons} /> : null}
           {view === "artifacts" ? <Artifacts comparisons={run.comparisons} /> : null}
@@ -145,9 +161,51 @@ export function App() {
           {view === "analysis" ? <Analysis comparisons={run.comparisons} /> : null}
           {view === "runtime" ? <Runtime comparisons={run.comparisons} signals={signals} /> : null}
           {view === "history" ? <History runs={runs} signals={signals} /> : null}
+          {view === "flakiness" ? <Flakiness comparisons={run.comparisons} signals={signals} /> : null}
         </>
       ) : null}
     </main>
+  );
+}
+
+function Runs({ runs, selectedId, onSelect }: { runs: StoredRun[]; selectedId: string; onSelect: (id: string) => void }) {
+  return (
+    <section className="panel">
+      <div className="panelTitle"><h2>Runs</h2><span>{runs.length} recent runs</span></div>
+      <table>
+        <thead><tr><th>When</th><th>Run</th><th>Upstream ref</th><th>Projects</th><th>Regressions</th></tr></thead>
+        <tbody>{runs.map((item) => (
+          <tr key={item.id}>
+            <td><button type="button" onClick={() => onSelect(item.id)}>{item.id === selectedId ? "Selected" : "Open"}</button></td>
+            <td>{new Date(item.createdAt).toLocaleString()}<small>{item.id}</small></td>
+            <td><code>{item.ref.slice(0, 12)}</code></td>
+            <td>{item.comparisons.length}</td>
+            <td>{item.comparisons.filter((comparison) => comparison.classification === "newly-broken").length}</td>
+          </tr>
+        ))}</tbody>
+      </table>
+    </section>
+  );
+}
+
+function Projects({ comparisons }: { comparisons: Comparison[] }) {
+  return (
+    <section className="panel">
+      <div className="panelTitle"><h2>Downstream projects</h2><span>{comparisons.length} approved revisions</span></div>
+      <table>
+        <thead><tr><th>Project</th><th>Ref</th><th>Ecosystem</th><th>Priority</th><th>Tags</th><th>Result</th></tr></thead>
+        <tbody>{comparisons.map((item) => (
+          <tr key={comparisonKey(item)}>
+            <td>{item.downstream?.repository ?? "downstream"}</td>
+            <td><code>{item.downstream?.ref ?? "unknown"}</code></td>
+            <td>{item.downstream?.ecosystem ?? "auto"}</td>
+            <td>{item.downstream?.priority ?? "normal"}</td>
+            <td>{item.downstream?.tags?.join(", ") || "—"}</td>
+            <td><code>{item.classification}</code></td>
+          </tr>
+        ))}</tbody>
+      </table>
+    </section>
   );
 }
 
@@ -157,17 +215,15 @@ function Matrix({ comparisons }: { comparisons: Comparison[] }) {
       <div className="panelTitle"><h2>Baseline / candidate matrix</h2><span>Deterministic CI fact</span></div>
       <table>
         <thead><tr><th>Downstream</th><th>Baseline</th><th>Candidate</th><th>Classification</th><th>Confidence</th></tr></thead>
-        <tbody>
-          {comparisons.map((item) => (
-            <tr key={comparisonKey(item)}>
-              <td>{item.downstream?.repository ?? "downstream"}<small>{item.downstream?.ref}</small></td>
-              <td>{outcome(item.baseline.test)}</td>
-              <td>{outcome(item.candidate.test)}</td>
-              <td><code>{item.classification}</code></td>
-              <td>{item.confidence === undefined ? "—" : `${Math.round(item.confidence * 100)}%`}</td>
-            </tr>
-          ))}
-        </tbody>
+        <tbody>{comparisons.map((item) => (
+          <tr key={comparisonKey(item)}>
+            <td>{item.downstream?.repository ?? "downstream"}<small>{item.downstream?.ref}</small></td>
+            <td>{outcome(item.baseline.test)}</td>
+            <td>{outcome(item.candidate.test)}</td>
+            <td><code>{item.classification}</code></td>
+            <td>{item.confidence === undefined ? "—" : `${Math.round(item.confidence * 100)}%`}</td>
+          </tr>
+        ))}</tbody>
       </table>
     </section>
   );
@@ -251,10 +307,27 @@ function History({ runs, signals }: { runs: StoredRun[]; signals: HistorySignals
     <section className="stack">
       <article className="panel">
         <div className="panelTitle"><h2>Historical compatibility</h2><span>{runs.length} recent runs</span></div>
-        <table><thead><tr><th>When</th><th>Ref</th><th>Downstreams</th><th>Regressions</th></tr></thead><tbody>{runs.map((run) => <tr key={run.id}><td>{new Date(run.createdAt).toLocaleString()}</td><td><code>{run.ref.slice(0, 12)}</code></td><td>{run.comparisons.length}</td><td>{run.comparisons.filter((item) => item.classification === "newly-broken").length}</td></tr>)}</tbody></table>
+        <table><thead><tr><th>When</th><th>Ref</th><th>Downstreams</th><th>Regressions</th></tr></thead><tbody>{runs.map((item) => <tr key={item.id}><td>{new Date(item.createdAt).toLocaleString()}</td><td><code>{item.ref.slice(0, 12)}</code></td><td>{item.comparisons.length}</td><td>{item.comparisons.filter((comparison) => comparison.classification === "newly-broken").length}</td></tr>)}</tbody></table>
       </article>
       {signals ? <article className="panel"><div className="panelTitle"><h2>Downstream signal history</h2><span>higher is cleaner signal</span></div><table><thead><tr><th>Downstream</th><th>Runs</th><th>Regressions</th><th>Flaky</th><th>Baseline failing</th><th>Signal</th></tr></thead><tbody>{signals.downstreams.map((item) => <tr key={item.repository}><td>{item.repository}</td><td>{item.runs}</td><td>{item.regressions}</td><td>{item.flaky}</td><td>{item.baselineFailing}</td><td>{Math.round(item.highSignalScore * 100)}%</td></tr>)}</tbody></table></article> : null}
       {signals?.clusters.length ? <article className="panel"><div className="panelTitle"><h2>Repeated failure clusters</h2><span>{signals.clusters.length} tracked</span></div><table><thead><tr><th>Cluster</th><th>Occurrences</th><th>Downstreams</th></tr></thead><tbody>{signals.clusters.map((cluster) => <tr key={cluster.id}><td>{cluster.label}<small>{cluster.id}</small></td><td>{cluster.occurrences}</td><td>{cluster.repositories.join(", ")}</td></tr>)}</tbody></table></article> : null}
+    </section>
+  );
+}
+
+function Flakiness({ comparisons, signals }: { comparisons: Comparison[]; signals: HistorySignals | null }) {
+  const current = comparisons.filter((item) => item.classification === "flaky");
+  const historical = (signals?.downstreams ?? []).filter((item) => item.flaky > 0);
+  return (
+    <section className="stack">
+      <article className="panel">
+        <div className="panelTitle"><h2>Current-run flakiness</h2><span>{current.length} flaky projects</span></div>
+        {current.length ? <table><thead><tr><th>Project</th><th>Ref</th><th>Reason</th></tr></thead><tbody>{current.map((item) => <tr key={comparisonKey(item)}><td>{item.downstream?.repository ?? "downstream"}</td><td><code>{item.downstream?.ref ?? "unknown"}</code></td><td>{item.reason}</td></tr>)}</tbody></table> : <p>No flaky result was observed in the selected run.</p>}
+      </article>
+      <article className="panel">
+        <div className="panelTitle"><h2>Historical flakiness</h2><span>{historical.length} projects</span></div>
+        {historical.length ? <table><thead><tr><th>Project</th><th>Runs</th><th>Flaky</th><th>Flake rate</th><th>Signal score</th></tr></thead><tbody>{historical.map((item) => <tr key={item.repository}><td>{item.repository}</td><td>{item.runs}</td><td>{item.flaky}</td><td>{Math.round((item.flaky / item.runs) * 100)}%</td><td>{Math.round(item.highSignalScore * 100)}%</td></tr>)}</tbody></table> : <p>No historical flakes are recorded in the loaded window.</p>}
+      </article>
     </section>
   );
 }
