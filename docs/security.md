@@ -21,9 +21,17 @@ The Docker runner uses:
 
 The source workspace is writable because build systems require it. The worker host must therefore treat the workspace as disposable and keep credentials outside it.
 
+## Worker API
+
+The direct worker execution endpoint `POST /v1/execute` is disabled unless `DOWNSTREAMCI_WORKER_TOKEN` is configured and requires `Authorization: Bearer <token>` on every request. Token comparison is constant-time. `/healthz` remains unauthenticated for orchestration probes.
+
+Do not expose the direct worker port to the public internet. Place it on a private network/firewall segment even when bearer authentication is enabled. `DOWNSTREAMCI_INTERNAL_TOKEN` is separately used for worker-to-coordinator queue traffic and should not be reused as the direct execution token.
+
 ## Host-side Git
 
 Downstream checkout disables system/global Git configuration and terminal credential prompts by using an isolated HOME and `GIT_CONFIG_NOSYSTEM=1`. This reduces exposure to host-configured filters/helpers while fetching public OSS revisions.
+
+Distributed PR execution separates candidate code from execution policy. Candidate source comes from the PR head repository/SHA, while `.downstreamci.yml` is loaded from the trusted base SHA. PR authors therefore cannot change network/resource/downstream policy for the same unreviewed run.
 
 ## Network
 

@@ -35,7 +35,7 @@ Relevant environment variables:
 - `GITHUB_WEBHOOK_SECRET` — required for webhook HMAC verification
 - `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY` — recommended installation-scoped App auth
 - `GITHUB_TOKEN` — operator-managed alternative to App auth
-- `DOWNSTREAMCI_INTERNAL_TOKEN` — required bearer token for `/internal/*`
+- `DOWNSTREAMCI_INTERNAL_TOKEN` — required bearer token for coordinator `/internal/*`
 - `DOWNSTREAMCI_DB` — SQLite path for local run history and coordinator jobs
 - `DOWNSTREAMCI_DATABASE_URL` or `DATABASE_URL` — optional PostgreSQL run history
 - `PORT` — defaults to 8787
@@ -55,10 +55,13 @@ Set:
 - optional `DOWNSTREAMCI_POLL_MS`
 - optional `DOWNSTREAMCI_LEASE_SECONDS` (120-3600; default 900)
 - optional host-only `DOWNSTREAMCI_GITHUB_READ_TOKEN` for private GitHub clones
+- `DOWNSTREAMCI_WORKER_TOKEN` if the direct `/v1/execute` API is enabled/used
 
 Start the worker with `DOWNSTREAMCI_COORDINATOR=1 DOWNSTREAMCI_STANDALONE=1` after building the app. Multiple workers can poll one coordinator. Active workers heartbeat their leases, expired leases can be reclaimed, and completion is rejected when the submitting worker no longer owns the live lease.
 
-`DOWNSTREAMCI_WORKSPACE_ROOT` is also enforced by the direct worker execution API. Resolved requested paths outside that filesystem root are rejected.
+The coordinator mode does not use `/v1/execute`; that endpoint exists for trusted direct orchestration integrations. It fails closed when `DOWNSTREAMCI_WORKER_TOKEN` is absent and otherwise requires that bearer token. Keep the worker service private behind a firewall/private network.
+
+`DOWNSTREAMCI_WORKSPACE_ROOT` is enforced by the direct worker execution API. Resolved requested paths outside that filesystem root are rejected.
 
 ## Runner image
 

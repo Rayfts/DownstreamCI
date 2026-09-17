@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { runInDocker } from "@downstreamci/core";
@@ -17,6 +18,11 @@ export function createWorkerServer() {
       network?: "none" | "bridge";
     };
   }>("/v1/execute", async (request, reply) => {
+    const configuredToken = process.env.DOWNSTREAMCI_WORKER_TOKEN;
+    if (!configuredToken) return reply.code(503).send({ error: "worker execution API is not configured" });
+    if (!validBearerToken(request.headers.authorization, configuredToken)) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
     const workspace = await confinedWorkspace(request.body.workspace);
     const result = await runInDocker({ ...request.body, workspace });
     if (result.kind === "infrastructure") return reply.code(503).send(result);
@@ -33,6 +39,14 @@ export async function confinedWorkspace(requested: string): Promise<string> {
   const rel = relative(root, candidate);
   if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) return candidate;
   throw new Error("Requested workspace is outside DOWNSTREAMCI_WORKSPACE_ROOT");
+}
+
+export function validBearerToken(authorization: string | undefined, expected: string): boolean {
+  if (!authorization?.startsWith("Bearer ")) return false;
+  const provided = authorization.slice("Bearer ".length);
+  const a = Buffer.from(expected);
+  const b = Buffer.from(provided);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 const app = createWorkerServer();
