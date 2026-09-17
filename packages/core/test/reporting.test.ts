@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { githubCheckOutput, summarizeComparisons } from "../src/reporting.js";
+import { githubCheckOutput, sanitizeComparisonsForStorage, summarizeComparisons } from "../src/reporting.js";
 import type { Comparison, Execution } from "../src/types.js";
 
 function execution(exitCode: number, output = "", environment: Record<string, string> = {}): Execution {
@@ -30,6 +30,12 @@ describe("GitHub compatibility reporting", () => {
     expect(output.text).toContain("ANALYSIS (codex)");
   });
 
+  it("returns neutral when no downstream result exists", () => {
+    const summary = summarizeComparisons([]);
+    expect(summary.conclusion).toBe("neutral");
+    expect(summary.title).toContain("No downstream results");
+  });
+
   it("returns a neutral conclusion when coverage is incomplete without a regression", () => {
     const comparison: Comparison = {
       classification: "baseline-failing",
@@ -38,5 +44,21 @@ describe("GitHub compatibility reporting", () => {
       reason: "pre-existing failure",
     };
     expect(summarizeComparisons([comparison]).conclusion).toBe("neutral");
+  });
+
+  it("redacts and bounds data before history persistence", () => {
+    const token = "ghp_123456789012345678901234567890";
+    const comparison: Comparison = {
+      classification: "newly-broken",
+      baseline: execution(0, "ok"),
+      candidate: execution(1, `Authorization: Bearer ${token}`),
+      analysis: { harness: "codex", label: "ANALYSIS", raw: `token=${token}` },
+      cluster: { id: "cluster-a", fingerprint: "abc", label: `failure ${token}`, members: 1 },
+      reason: "candidate-only",
+    };
+    const [stored] = sanitizeComparisonsForStorage([comparison]);
+    const serialized = JSON.stringify(stored);
+    expect(serialized).not.toContain(token);
+    expect(serialized).toContain("<redacted-github-token>");
   });
 });

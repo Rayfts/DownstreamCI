@@ -1,4 +1,4 @@
-import type { Comparison } from "./types.js";
+import type { CommandResult, Comparison, Execution } from "./types.js";
 
 export interface CompatibilitySummary {
   total: number;
@@ -11,6 +11,15 @@ export interface CompatibilitySummary {
 export function summarizeComparisons(comparisons: Comparison[]): CompatibilitySummary {
   const counts: Record<string, number> = {};
   for (const result of comparisons) counts[result.classification] = (counts[result.classification] ?? 0) + 1;
+  if (comparisons.length === 0) {
+    return {
+      total: 0,
+      counts,
+      conclusion: "neutral",
+      title: "No downstream results were produced",
+      summary: "0 downstreams",
+    };
+  }
   const regressions = counts["newly-broken"] ?? 0;
   const coverageGaps =
     (counts["baseline-failing"] ?? 0) +
@@ -63,11 +72,11 @@ export function githubCheckOutput(comparisons: Comparison[]): { title: string; s
     "",
     "## Counts",
     ...(countLines.length ? countLines : ["- No downstream results were produced."]),
-    evidence ? `\n## Evidence\n\n${evidence}` : "\nAll approved downstream comparisons were unaffected.",
+    evidence ? `\n## Evidence\n\n${evidence}` : comparisons.length ? "\nAll approved downstream comparisons were unaffected." : "\nNo usable downstream comparisons were produced; the Check is neutral.",
   ].join("\n");
   return {
     title: summary.title.slice(0, 255),
-    summary: [`**Total downstreams:** ${summary.total}`, summary.summary || "No downstreams"].join("\n\n").slice(0, 65_535),
+    summary: [`**Total downstreams:** ${summary.total}`, summary.summary].join("\n\n").slice(0, 65_535),
     text: text.slice(0, 60_000),
   };
 }
@@ -81,6 +90,37 @@ export function sanitizeLog(value: string, maxChars = 8_000): string {
     .replace(/\b(AWS_SECRET_ACCESS_KEY\s*[=:]\s*)\S+/gi, "$1<redacted>")
     .replace(/\b(Authorization:\s*Bearer\s+)\S+/gi, "$1<redacted>");
   return redacted.slice(-maxChars);
+}
+
+export function sanitizeComparisonsForStorage(comparisons: Comparison[]): Comparison[] {
+  return comparisons.map((comparison) => ({
+    ...comparison,
+    baseline: sanitizeExecution(comparison.baseline),
+    candidate: sanitizeExecution(comparison.candidate),
+    ...(comparison.analysis
+      ? { analysis: { ...comparison.analysis, raw: sanitizeLog(comparison.analysis.raw, 16_000) } }
+      : {}),
+    ...(comparison.cluster
+      ? { cluster: { ...comparison.cluster, label: sanitizeLog(comparison.cluster.label, 1_000) } }
+      : {}),
+  }));
+}
+
+function sanitizeExecution(execution: Execution): Execution {
+  return {
+    ...(execution.setup ? { setup: sanitizeCommandResult(execution.setup) } : {}),
+    test: sanitizeCommandResult(execution.test),
+    attempts: execution.attempts.map(sanitizeCommandResult),
+    environment: { ...execution.environment },
+  };
+}
+
+function sanitizeCommandResult(result: CommandResult): CommandResult {
+  return {
+    ...result,
+    stdout: sanitizeLog(result.stdout, 20_000),
+    stderr: sanitizeLog(result.stderr, 20_000),
+  };
 }
 
 function renderEvidence(item: Comparison, index: number): string {

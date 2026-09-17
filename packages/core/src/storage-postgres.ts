@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import postgres from "postgres";
+import { sanitizeComparisonsForStorage } from "./reporting.js";
 import { aggregateHistorySignals, type HistorySignals, type StoredRun } from "./storage.js";
 import type { Comparison } from "./types.js";
 
@@ -38,7 +39,7 @@ export class PostgresRunStore {
 
   async save(id: string, upstream: string, ref: string, comparisons: Comparison[]): Promise<void> {
     await this.initialize();
-    const payload = JSON.stringify(comparisons);
+    const payload = JSON.stringify(sanitizeComparisonsForStorage(comparisons));
     await this.client`
       INSERT INTO runs (id, created_at, upstream, ref, payload)
       VALUES (${id}, NOW(), ${upstream}, ${ref}, ${payload})

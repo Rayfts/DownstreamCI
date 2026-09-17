@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { RunStore } from "../src/storage.js";
 import type { Comparison, Execution } from "../src/types.js";
 
-function execution(exitCode: number): Execution {
+function execution(exitCode: number, output = ""): Execution {
   const test = {
     command: "test",
     exitCode,
-    stdout: "",
+    stdout: output,
     stderr: "",
     durationMs: 1,
     timedOut: false,
@@ -37,6 +37,22 @@ describe("run history signals", () => {
       expect(signals.downstreams.find((item) => item.repository === "org/flaky")?.flaky).toBe(2);
       expect(signals.ecosystems.npm?.flaky).toBe(2);
       expect(signals.runtimes.node?.["24.0.0"]).toBe(4);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("never persists raw credential-shaped log or analysis values", () => {
+    const store = new RunStore(":memory:");
+    const token = "ghp_123456789012345678901234567890";
+    try {
+      const item = comparison("newly-broken", "org/private");
+      item.candidate = execution(1, `leaked=${token}`);
+      item.analysis = { harness: "codex", label: "ANALYSIS", raw: token };
+      store.save("secret", "upstream", "sha", [item]);
+      const serialized = JSON.stringify(store.get("secret"));
+      expect(serialized).not.toContain(token);
+      expect(serialized).toContain("<redacted-github-token>");
     } finally {
       store.close();
     }

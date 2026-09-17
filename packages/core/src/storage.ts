@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { sanitizeComparisonsForStorage } from "./reporting.js";
 import type { Classification, Comparison } from "./types.js";
 
 export const runs = sqliteTable("runs", {
@@ -61,9 +62,10 @@ export class RunStore {
   }
 
   save(id: string, upstream: string, ref: string, comparisons: Comparison[]): void {
+    const payload = JSON.stringify(sanitizeComparisonsForStorage(comparisons));
     this.sqlite
       .prepare("INSERT OR REPLACE INTO runs (id, created_at, upstream, ref, payload) VALUES (?, ?, ?, ?, ?)")
-      .run(id, Date.now(), upstream, ref, JSON.stringify(comparisons));
+      .run(id, Date.now(), upstream, ref, payload);
   }
 
   get(id: string): Comparison[] | null {
