@@ -29,10 +29,33 @@ export interface Execution {
   environment: Record<string, string>;
 }
 
+export interface ArtifactReference {
+  kind: "baseline-log" | "candidate-log" | "comparison";
+  path: string;
+  sha256: string;
+  bytes: number;
+}
+
+export interface FailureCluster {
+  id: string;
+  fingerprint: string;
+  label: string;
+  members: number;
+}
+
 export interface Comparison {
-  downstream?: { repository: string; ref: string };
+  downstream?: {
+    repository: string;
+    ref: string;
+    ecosystem?: Ecosystem | "auto";
+    tags?: string[];
+    priority?: "low" | "normal" | "high";
+  };
   analysis?: { harness: string; raw: string; label: "ANALYSIS" };
   classification: Classification;
+  confidence?: number;
+  cluster?: FailureCluster;
+  artifacts?: ArtifactReference[];
   baseline: Execution;
   candidate: Execution;
   baselineSignature?: string;

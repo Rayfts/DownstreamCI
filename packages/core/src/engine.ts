@@ -60,7 +60,13 @@ export async function runComparison(spec: DownstreamSpec, runner: PairRunner): P
     const candidate = await runner.runCandidate(candidateWorkspace, spec);
     return {
       ...compareExecutions(baseline, candidate),
-      downstream: { repository: spec.repository, ref: spec.ref },
+      downstream: {
+        repository: spec.repository,
+        ref: spec.ref,
+        ecosystem: spec.ecosystem,
+        ...(spec.tags ? { tags: spec.tags } : {}),
+        ...(spec.priority ? { priority: spec.priority } : {}),
+      },
     };
   } finally {
     await rm(temp, { recursive: true, force: true });

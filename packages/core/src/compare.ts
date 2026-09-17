@@ -18,6 +18,10 @@ function observedBothPassAndFail(execution: Execution): boolean {
   return new Set(execution.attempts.map((attempt) => passed(attempt))).size > 1;
 }
 
+function stableConfidence(baseline: Execution, candidate: Execution): number {
+  return baseline.attempts.length >= 2 && candidate.attempts.length >= 2 ? 0.99 : 0.9;
+}
+
 export function compareExecutions(baseline: Execution, candidate: Execution): Comparison {
   const baselineText = `${baseline.test.stderr}\n${baseline.test.stdout}`;
   const candidateText = `${candidate.test.stderr}\n${candidate.test.stdout}`;
@@ -29,28 +33,77 @@ export function compareExecutions(baseline: Execution, candidate: Execution): Co
   };
 
   if (setupFailed(baseline) || setupFailed(candidate)) {
-    return { classification: "setup-failure", baseline, candidate, ...withSignatures, reason: "Setup failed before a trustworthy comparison could be made." };
+    return {
+      classification: "setup-failure",
+      confidence: 0.25,
+      baseline,
+      candidate,
+      ...withSignatures,
+      reason: "Setup failed before a trustworthy comparison could be made.",
+    };
   }
   if (infra(baseline) || infra(candidate)) {
-    return { classification: "infrastructure-failure", baseline, candidate, ...withSignatures, reason: "A timeout or infrastructure failure prevented a trustworthy comparison." };
+    return {
+      classification: "infrastructure-failure",
+      confidence: 0.2,
+      baseline,
+      candidate,
+      ...withSignatures,
+      reason: "A timeout or infrastructure failure prevented a trustworthy comparison.",
+    };
   }
   if (observedBothPassAndFail(baseline) || observedBothPassAndFail(candidate)) {
-    return { classification: "flaky", baseline, candidate, ...withSignatures, reason: "Repeated attempts produced both passing and failing outcomes." };
+    return {
+      classification: "flaky",
+      confidence: 0.5,
+      baseline,
+      candidate,
+      ...withSignatures,
+      reason: "Repeated attempts produced both passing and failing outcomes.",
+    };
   }
 
   const basePass = passed(baseline.test);
   const candPass = passed(candidate.test);
-  if (basePass && candPass) return { classification: "unaffected", baseline, candidate, reason: "The downstream passes both baseline and candidate." };
-  if (basePass && !candPass) return { classification: "newly-broken", baseline, candidate, ...withSignatures, reason: "The downstream passes baseline and fails only with the candidate." };
-  if (!basePass && candPass) return { classification: "improved", baseline, candidate, ...withSignatures, reason: "The downstream fails baseline and passes with the candidate." };
+  if (basePass && candPass) {
+    return {
+      classification: "unaffected",
+      confidence: stableConfidence(baseline, candidate),
+      baseline,
+      candidate,
+      reason: "The downstream passes both baseline and candidate.",
+    };
+  }
+  if (basePass && !candPass) {
+    return {
+      classification: "newly-broken",
+      confidence: stableConfidence(baseline, candidate),
+      baseline,
+      candidate,
+      ...withSignatures,
+      reason: "The downstream passes baseline and fails only with the candidate.",
+    };
+  }
+  if (!basePass && candPass) {
+    return {
+      classification: "improved",
+      confidence: stableConfidence(baseline, candidate),
+      baseline,
+      candidate,
+      ...withSignatures,
+      reason: "The downstream fails baseline and passes with the candidate.",
+    };
+  }
 
   return {
     classification: "baseline-failing",
+    confidence: baselineSignature === candidateSignature ? 0.99 : 0.85,
     baseline,
     candidate,
     ...withSignatures,
-    reason: baselineSignature === candidateSignature
-      ? "The downstream already fails at baseline with the same normalized signature."
-      : "The downstream already fails at baseline; candidate failure is not promoted to a regression.",
+    reason:
+      baselineSignature === candidateSignature
+        ? "The downstream already fails at baseline with the same normalized signature."
+        : "The downstream already fails at baseline; candidate failure is not promoted to a regression.",
   };
 }
