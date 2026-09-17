@@ -59,4 +59,17 @@ describe("worker execution API authentication", () => {
     expect(response.statusCode).toBe(401);
     await app.close();
   });
+
+  it("rejects unknown Docker networks before touching the workspace", async () => {
+    process.env.DOWNSTREAMCI_WORKER_TOKEN = "worker-secret";
+    const app = createWorkerServer();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/execute",
+      headers: { authorization: "Bearer worker-secret" },
+      payload: { image: "example", workspace: "/definitely/not/read", command: "true", network: "host" },
+    });
+    expect(response.statusCode).toBe(400);
+    await app.close();
+  });
 });

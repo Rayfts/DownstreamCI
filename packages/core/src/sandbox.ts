@@ -4,8 +4,10 @@ import { runProcess } from "./process.js";
 import type { CommandResult, ResourceLimits, ServiceSpec } from "./types.js";
 
 const defaults: ResourceLimits = { cpus: 2, memoryMb: 2048, pids: 256, timeoutSeconds: 900 };
+const maxima: ResourceLimits = { cpus: 16, memoryMb: 32_768, pids: 4_096, timeoutSeconds: 7_200 };
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SERVICE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+const TMPFS_TARGET = /^\/[A-Za-z0-9_./-]+$/;
 
 export interface SandboxMount {
   source: string;
@@ -31,7 +33,7 @@ export interface ServiceStack {
 }
 
 export async function runInDocker(spec: SandboxCommand): Promise<CommandResult> {
-  const limits = { ...defaults, ...spec.resources };
+  const limits = boundedResources(spec.resources);
   const name = `downstreamci-${randomUUID()}`;
   const clientEnv: Record<string, string> = {};
   const args = [
@@ -103,12 +105,27 @@ export async function runInDocker(spec: SandboxCommand): Promise<CommandResult> 
   }
 }
 
+export function boundedResources(resources: Partial<ResourceLimits> | undefined): ResourceLimits {
+  return {
+    cpus: boundedNumber(resources?.cpus, defaults.cpus, 0.1, maxima.cpus),
+    memoryMb: Math.trunc(boundedNumber(resources?.memoryMb, defaults.memoryMb, 64, maxima.memoryMb)),
+    pids: Math.trunc(boundedNumber(resources?.pids, defaults.pids, 16, maxima.pids)),
+    timeoutSeconds: Math.trunc(
+      boundedNumber(resources?.timeoutSeconds, defaults.timeoutSeconds, 1, maxima.timeoutSeconds),
+    ),
+  };
+}
+
 export function normalizeServices(services: Array<string | ServiceSpec>): ServiceSpec[] {
+  if (services.length > 8) throw new Error("At most 8 service containers are allowed per downstream comparison");
   const used = new Set<string>();
   return services.map((service, index) => {
     const normalized = typeof service === "string" ? { name: imageName(service, index), image: service } : { ...service };
     let name = normalized.name;
     if (!SERVICE_NAME.test(name)) throw new Error(`Invalid service name: ${name}`);
+    if ((normalized.tmpfs ?? []).some((target) => !TMPFS_TARGET.test(target))) {
+      throw new Error(`Invalid service tmpfs target for ${name}`);
+    }
     if (used.has(name)) {
       let suffix = 2;
       while (used.has(`${name}-${suffix}`)) suffix += 1;
@@ -136,6 +153,8 @@ export async function startServiceStack(
       const container = `downstreamci-svc-${randomUUID()}`;
       containers.push(container);
       const clientEnv: Record<string, string> = {};
+      const servicePids = Math.trunc(boundedNumber(service.pids, 128, 16, 1_024));
+      const serviceMemoryMb = Math.trunc(boundedNumber(service.memoryMb, 512, 64, 8_192));
       const args = [
         "run",
         "-d",
@@ -149,14 +168,17 @@ export async function startServiceStack(
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
         "--pids-limit",
-        String(service.pids ?? 128),
+        String(servicePids),
         "--memory",
-        `${service.memoryMb ?? 512}m`,
+        `${serviceMemoryMb}m`,
         "--tmpfs",
         "/tmp:rw,nosuid,nodev,size=256m",
       ];
       if (service.readOnly !== false) args.push("--read-only");
-      for (const tmpfs of service.tmpfs ?? []) args.push("--tmpfs", `${tmpfs}:rw,nosuid,nodev`);
+      for (const tmpfs of service.tmpfs ?? []) {
+        if (!TMPFS_TARGET.test(tmpfs)) throw new Error(`Invalid service tmpfs target for ${service.name}`);
+        args.push("--tmpfs", `${tmpfs}:rw,nosuid,nodev`);
+      }
       for (const [key, value] of Object.entries(service.env ?? {})) {
         if (!ENV_KEY.test(key)) throw new Error(`Invalid service environment variable name: ${key}`);
         clientEnv[key] = value;
@@ -168,7 +190,11 @@ export async function startServiceStack(
       args.push(service.image, ...(service.command ?? []));
       const started = await runProcess("docker", args, { env: clientEnv, timeoutSeconds: 60, maxOutputBytes: 128 * 1024 });
       if (started.exitCode !== 0) throw new Error(`Unable to start service ${service.name}: ${started.stderr}`);
-      await waitForService(container, Boolean(service.healthcheck), service.healthTimeoutSeconds ?? 60);
+      await waitForService(
+        container,
+        Boolean(service.healthcheck),
+        Math.trunc(boundedNumber(service.healthTimeoutSeconds, 60, 1, 300)),
+      );
       const key = service.name.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
       environment[`DOWNSTREAMCI_SERVICE_${key}_HOST`] = service.name;
       if (service.port) environment[`DOWNSTREAMCI_SERVICE_${key}_PORT`] = String(service.port);
@@ -182,6 +208,11 @@ export async function startServiceStack(
     await cleanupServiceStack(containers, network);
     throw error;
   }
+}
+
+function boundedNumber(value: number | undefined, fallback: number, min: number, max: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, value));
 }
 
 function imageName(image: string, index: number): string {

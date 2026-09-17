@@ -23,6 +23,9 @@ export function createWorkerServer() {
     if (!validBearerToken(request.headers.authorization, configuredToken)) {
       return reply.code(401).send({ error: "unauthorized" });
     }
+    if (request.body.network && request.body.network !== "none" && request.body.network !== "bridge") {
+      return reply.code(400).send({ error: "network must be none or bridge" });
+    }
     const workspace = await confinedWorkspace(request.body.workspace);
     const result = await runInDocker({ ...request.body, workspace });
     if (result.kind === "infrastructure") return reply.code(503).send(result);

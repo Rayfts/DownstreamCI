@@ -11,7 +11,7 @@ The Docker runner uses:
 - writable workspace plus isolated `/tmp` tmpfs
 - `--cap-drop=ALL`
 - `no-new-privileges`
-- PID, CPU, memory, and wall-clock limits
+- PID, CPU, memory, and wall-clock limits with hard maxima
 - network `none` by default
 - explicit environment-variable injection only
 - environment values omitted from command evidence
@@ -19,11 +19,13 @@ The Docker runner uses:
 - no host Docker socket mount
 - candidate source mounted read-only at `/candidate`
 
+Worker-side defense in depth clamps programmatic execution requests to at most 16 CPUs, 32 GiB RAM, 4,096 PIDs, and two hours per command. Configuration validation applies the same ceilings. Service sidecars are limited to eight per downstream, 8 GiB RAM and 1,024 PIDs each, with health waits capped at five minutes.
+
 The source workspace is writable because build systems require it. The worker host must therefore treat the workspace as disposable and keep credentials outside it.
 
 ## Worker API
 
-The direct worker execution endpoint `POST /v1/execute` is disabled unless `DOWNSTREAMCI_WORKER_TOKEN` is configured and requires `Authorization: Bearer <token>` on every request. Token comparison is constant-time. `/healthz` remains unauthenticated for orchestration probes.
+The direct worker execution endpoint `POST /v1/execute` is disabled unless `DOWNSTREAMCI_WORKER_TOKEN` is configured and requires `Authorization: Bearer <token>` on every request. Token comparison is constant-time. The direct API accepts only Docker network modes `none` and `bridge`; arbitrary existing Docker network names are rejected. `/healthz` remains unauthenticated for orchestration probes.
 
 Do not expose the direct worker port to the public internet. Place it on a private network/firewall segment even when bearer authentication is enabled. `DOWNSTREAMCI_INTERNAL_TOKEN` is separately used for worker-to-coordinator queue traffic and should not be reused as the direct execution token.
 
