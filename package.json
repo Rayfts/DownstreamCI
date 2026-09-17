@@ -11,14 +11,15 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm --filter @downstreamci/core build && pnpm -r typecheck",
     "test": "pnpm -r test",
-    "lint": "biome check .",
-    "lint:fix": "biome check --write .",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
     "check": "pnpm typecheck && pnpm test && pnpm fixtures:test && pnpm lint",
     "fixtures:test": "node scripts/fixture-smoke.mjs",
     "runner:build": "docker build -t downstreamci/runner:local containers/runner"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.2.4",
+    "@biomejs/biome": "2.5.14",
     "@types/node": "^24.3.1",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
