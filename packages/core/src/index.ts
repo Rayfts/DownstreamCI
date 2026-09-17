@@ -10,6 +10,7 @@ export * from "./ecosystems.js";
 export * from "./harnesses.js";
 export * from "./agent-analysis.js";
 export * from "./engine.js";
+export * from "./pipeline.js";
 export * from "./local-runner.js";
 export * from "./reporting.js";
 export * from "./storage.js";

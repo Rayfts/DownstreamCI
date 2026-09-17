@@ -2,26 +2,30 @@ import { realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { runInDocker } from "@downstreamci/core";
 import Fastify from "fastify";
+import { runCoordinatorLoop } from "./coordinator.js";
 
-const app = Fastify({ logger: true, bodyLimit: 1_000_000 });
-app.get("/healthz", async () => ({ ok: true }));
+export function createWorkerServer() {
+  const app = Fastify({ logger: true, bodyLimit: 1_000_000 });
+  app.get("/healthz", async () => ({ ok: true }));
 
-app.post<{
-  Body: {
-    image: string;
-    workspace: string;
-    command: string;
-    env?: Record<string, string>;
-    network?: "none" | "bridge";
-  };
-}>("/v1/execute", async (request, reply) => {
-  const workspace = await confinedWorkspace(request.body.workspace);
-  const result = await runInDocker({ ...request.body, workspace });
-  if (result.kind === "infrastructure") return reply.code(503).send(result);
-  return result;
-});
+  app.post<{
+    Body: {
+      image: string;
+      workspace: string;
+      command: string;
+      env?: Record<string, string>;
+      network?: "none" | "bridge";
+    };
+  }>("/v1/execute", async (request, reply) => {
+    const workspace = await confinedWorkspace(request.body.workspace);
+    const result = await runInDocker({ ...request.body, workspace });
+    if (result.kind === "infrastructure") return reply.code(503).send(result);
+    return result;
+  });
+  return app;
+}
 
-async function confinedWorkspace(requested: string): Promise<string> {
+export async function confinedWorkspace(requested: string): Promise<string> {
   const configuredRoot = process.env.DOWNSTREAMCI_WORKSPACE_ROOT;
   if (!configuredRoot) throw new Error("DOWNSTREAMCI_WORKSPACE_ROOT must be configured for worker execution");
   const root = await realpath(resolve(configuredRoot));
@@ -31,7 +35,14 @@ async function confinedWorkspace(requested: string): Promise<string> {
   throw new Error("Requested workspace is outside DOWNSTREAMCI_WORKSPACE_ROOT");
 }
 
+const app = createWorkerServer();
 if (process.env.DOWNSTREAMCI_STANDALONE === "1") {
   await app.listen({ port: Number(process.env.PORT ?? 8790), host: "0.0.0.0" });
+  if (process.env.DOWNSTREAMCI_COORDINATOR_URL) {
+    const controller = new AbortController();
+    process.once("SIGTERM", () => controller.abort());
+    process.once("SIGINT", () => controller.abort());
+    await runCoordinatorLoop(controller.signal);
+  }
 }
 export { app };
