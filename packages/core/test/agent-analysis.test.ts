@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { buildAnalysisPrompt, buildSemanticClusterPrompt } from "../src/agent-analysis.js";
+import { afterEach, describe, expect, it } from "vitest";
+import { buildAgentEnvironment, buildAnalysisPrompt, buildSemanticClusterPrompt } from "../src/agent-analysis.js";
 import type { Comparison, Execution } from "../src/types.js";
+
+const originalEnvironment = { ...process.env };
+afterEach(() => {
+  for (const key of Object.keys(process.env)) delete process.env[key];
+  Object.assign(process.env, originalEnvironment);
+});
 
 function execution(exitCode: number, output: string): Execution {
   const test = {
@@ -44,5 +50,24 @@ describe("agent analysis prompts", () => {
     expect(prompt).toContain("cluster-deadbeef");
     expect(prompt).toContain("OPTIONAL semantic clustering");
     expect(prompt).toContain("Do not merge, remove, relabel, or override CI facts");
+  });
+
+  it("passes model credentials but excludes GitHub and control-plane secrets", () => {
+    process.env.OPENAI_API_KEY = "model-key";
+    process.env.GITHUB_TOKEN = "github-secret";
+    process.env.DOWNSTREAMCI_GITHUB_READ_TOKEN = "clone-secret";
+    process.env.DOWNSTREAMCI_INTERNAL_TOKEN = "internal-secret";
+    process.env.AWS_SECRET_ACCESS_KEY = "aws-secret";
+    process.env.SAFE_AGENT_SETTING = "safe-value";
+    process.env.DOWNSTREAMCI_AGENT_ENV_ALLOWLIST = "SAFE_AGENT_SETTING,GITHUB_TOKEN,AWS_SECRET_ACCESS_KEY";
+
+    const environment = buildAgentEnvironment("/tmp/downstreamci-analysis-test");
+    expect(environment.OPENAI_API_KEY).toBe("model-key");
+    expect(environment.SAFE_AGENT_SETTING).toBe("safe-value");
+    expect(environment.GITHUB_TOKEN).toBeUndefined();
+    expect(environment.DOWNSTREAMCI_GITHUB_READ_TOKEN).toBeUndefined();
+    expect(environment.DOWNSTREAMCI_INTERNAL_TOKEN).toBeUndefined();
+    expect(environment.AWS_SECRET_ACCESS_KEY).toBeUndefined();
+    expect(environment.HOME).toBe("/tmp/downstreamci-analysis-test/home");
   });
 });
