@@ -14,7 +14,9 @@ function execution(...results: CommandResult[]): Execution {
 
 describe("compareExecutions", () => {
   it("detects candidate-only failures", () => {
-    expect(compareExecutions(execution(result(0)), execution(result(1, "TypeError: removed API"))).classification).toBe("newly-broken");
+    expect(compareExecutions(execution(result(0)), execution(result(1, "TypeError: removed API"))).classification).toBe(
+      "newly-broken",
+    );
   });
 
   it("never promotes a pre-existing failure to regression", () => {
@@ -33,5 +35,24 @@ describe("compareExecutions", () => {
   it("classifies timeout as infrastructure failure", () => {
     const timeout = { ...result(1, "timeout"), timedOut: true };
     expect(compareExecutions(execution(result(0)), execution(timeout)).classification).toBe("infrastructure-failure");
+  });
+
+  it("classifies infrastructure errors during setup as infrastructure failures", () => {
+    const infrastructure: CommandResult = {
+      command: "docker run",
+      exitCode: null,
+      stdout: "",
+      stderr: "docker daemon unavailable",
+      durationMs: 1,
+      timedOut: false,
+      kind: "infrastructure",
+    };
+    const candidate: Execution = {
+      setup: infrastructure,
+      test: infrastructure,
+      attempts: [infrastructure],
+      environment: {},
+    };
+    expect(compareExecutions(execution(result(0)), candidate).classification).toBe("infrastructure-failure");
   });
 });
