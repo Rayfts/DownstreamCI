@@ -7,6 +7,10 @@ inputs:
     description: Path to .downstreamci.yml relative to the upstream repository
     required: false
     default: .downstreamci.yml
+  policy-ref:
+    description: Optional trusted Git ref from which to load config. Pull-request runs automatically use the PR base SHA.
+    required: false
+    default: ""
   runner-image:
     description: Reviewed Docker image used for untrusted downstream execution
     required: false
@@ -54,15 +58,41 @@ runs:
       shell: bash
       env:
         DOWNSTREAMCI_ACTION_CONFIG: ${{ inputs.config }}
+        DOWNSTREAMCI_ACTION_POLICY_REF: ${{ inputs.policy-ref }}
+        DOWNSTREAMCI_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         DOWNSTREAMCI_ACTION_RUNNER_IMAGE: ${{ inputs.runner-image }}
         DOWNSTREAMCI_ACTION_RETRIES: ${{ inputs.retries }}
         DOWNSTREAMCI_ACTION_HARNESS: ${{ inputs.harness }}
         DOWNSTREAMCI_GITHUB_READ_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
+
+        if [[ "${GITHUB_EVENT_NAME:-}" == "pull_request_target" ]]; then
+          echo "::error::DownstreamCI refuses pull_request_target because it can combine untrusted PR intent with privileged workflow context. Use pull_request instead."
+          exit 2
+        fi
+
+        policy_ref="$DOWNSTREAMCI_ACTION_POLICY_REF"
+        if [[ "${GITHUB_EVENT_NAME:-}" == "pull_request" ]]; then
+          if [[ -z "$policy_ref" ]]; then
+            policy_ref="$DOWNSTREAMCI_PR_BASE_SHA"
+          fi
+          if [[ -z "$policy_ref" ]]; then
+            echo "::error::Unable to determine trusted pull-request base SHA. Pass policy-ref explicitly."
+            exit 2
+          fi
+        fi
+
+        config_path="$DOWNSTREAMCI_ACTION_CONFIG"
+        if [[ -n "$policy_ref" ]]; then
+          git -C "$GITHUB_WORKSPACE" fetch --quiet --no-tags --depth=1 origin "$policy_ref"
+          config_path="${RUNNER_TEMP:-/tmp}/downstreamci-policy-${GITHUB_RUN_ID:-local}.yml"
+          git -C "$GITHUB_WORKSPACE" show "$policy_ref:$DOWNSTREAMCI_ACTION_CONFIG" > "$config_path"
+        fi
+
         args=(
           run "$GITHUB_WORKSPACE"
-          --config "$DOWNSTREAMCI_ACTION_CONFIG"
+          --config "$config_path"
           --runner-image "$DOWNSTREAMCI_ACTION_RUNNER_IMAGE"
           --retries "$DOWNSTREAMCI_ACTION_RETRIES"
         )

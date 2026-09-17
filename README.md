@@ -19,7 +19,7 @@ Only a baseline pass followed by a candidate failure is `newly-broken`. Pre-exis
 - deterministic baseline/candidate classifier with repeated-attempt flake detection
 - maintainer-declared expected-flake matching, normalized signatures, confidence, and deterministic failure clusters
 - independent baseline/candidate checkouts at the same pinned downstream ref
-- hardened Docker sandbox: read-only root, dropped capabilities, no-new-privileges, CPU/memory/PID/time limits, bounded logs, and network disabled by default
+- hardened Docker sandbox: read-only root, dropped capabilities, no-new-privileges, bounded CPU/memory/PID/time, bounded logs, and network disabled by default
 - optional isolated service containers on per-comparison Docker networks with no host ports
 - Node ecosystem support for npm, pnpm, and Yarn
 - Python support for pip, uv, and Poetry
@@ -29,9 +29,9 @@ Only a baseline pass followed by a candidate failure is `newly-broken`. Pre-exis
 - optional PostgreSQL run history for distributed deployments
 - historical signals for repeated regressions, flaky projects, clusters, ecosystems, and runtime versions
 - CLI, reusable GitHub Action, GitHub App/Checks coordinator, authenticated durable job queue, worker service, and React/Vite dashboard
+- trusted-base policy for both GitHub App and GitHub Action PR execution
 - suggestion-only GitHub downstream discovery with deterministic ranking by dependency evidence, activity, adoption, popularity, and fork status
 - ten coding-agent capability adapters with upstream provenance and no fabricated headless support
-- fixtures/tests for candidate-only breaks, pre-existing failures, ecosystem strategies, artifacts, clustering, storage, queueing, worker confinement, reporting, and harness contracts
 
 ## Quick start
 
@@ -74,39 +74,15 @@ jobs:
           retries: "2"
 ```
 
-Replace `<pinned-ref>` with a reviewed release tag or full commit SHA. For private downstream repositories, pass `github-token` explicitly. It is used only by host-side Git checkout and is not injected into downstream test containers. The Action does not require a proprietary DownstreamCI cloud service.
+Replace `<pinned-ref>` with a reviewed release tag or full commit SHA. On `pull_request`, the Action automatically loads `.downstreamci.yml` from the PR base SHA while testing candidate code from the checked-out PR. A PR therefore cannot grant itself network access, change the approved downstream set, or raise resource policy. `pull_request_target` is refused. For unusual trusted workflows, `policy-ref` can explicitly select the reviewed config revision.
+
+For private downstream repositories, pass `github-token` explicitly. It is used only by host-side Git checkout and is not injected into downstream test containers. The Action does not require a proprietary DownstreamCI cloud service.
 
 ## Configuration
 
-Copy `.downstreamci.example.yml` and pin downstream revisions for repeatability:
+Copy `.downstreamci.example.yml` and pin downstream revisions for repeatability. If `setup` is omitted, the ecosystem adapter uses the detected package manager: npm/pnpm/Yarn, pip/uv/Poetry, Cargo, or Go modules. `network: none` is the secure default. Fresh dependency installation generally needs explicit `network: bridge` unless dependencies are already cached or vendored.
 
-```yaml
-version: 1
-
-downstreams:
-  - repository: https://github.com/example/consumer.git
-    ref: 6bb7b8c0d5d4e2c8f0d3b55a73d18a41996611a9
-    ecosystem: auto
-    build: npm run build
-    test: npm test
-    timeoutSeconds: 900
-    runtime:
-      node: "24"
-    replacement: auto
-    resources:
-      cpus: 2
-      memoryMb: 2048
-      pids: 256
-    network:
-      mode: bridge
-    tags: [representative]
-    priority: high
-    expectedFlakyTests: []
-```
-
-If `setup` is omitted, the ecosystem adapter uses the detected package manager: npm/pnpm/Yarn, pip/uv/Poetry, Cargo, or Go modules. `network: none` is the secure default. Fresh dependency installation generally needs explicit `network: bridge` unless dependencies are already cached or vendored.
-
-Services can be declared by image name or as structured sidecars with a name, image, environment, optional command/tmpfs/health check/port metadata, and resource bounds. They receive no host port mapping. Without `network: bridge`, the per-run service network is Docker-internal and has no external egress.
+Configuration is bounded to 100 approved downstreams, eight service sidecars per downstream, at most 16 CPUs, 32 GiB RAM, 4,096 PIDs, and a two-hour command timeout. The sandbox clamps these limits again at runtime even when a programmatic caller bypasses YAML validation.
 
 ## Classification model
 
@@ -138,22 +114,7 @@ See [`docs/ecosystem-adapters.md`](docs/ecosystem-adapters.md).
 
 ## Coding-agent analysis
 
-Registered harnesses:
-
-- OpenAI Codex
-- Claude Code
-- OpenCode
-- Pi
-- Gemini CLI
-- Aider
-- Goose
-- Cline
-- Roo Code
-- Continue
-
-Each capability record stores the researched upstream repository, verification date, and evidence paths. Roo Code remains registered but automated invocation is disabled because no stable headless CLI was verified. DownstreamCI does not invent one.
-
-Agents execute only after deterministic CI finds a candidate-only failure. They receive bounded evidence in a disposable analysis directory and return output labeled `ANALYSIS`.
+Registered harnesses: OpenAI Codex, Claude Code, OpenCode, Pi, Gemini CLI, Aider, Goose, Cline, Roo Code, and Continue. Each capability record stores the researched upstream repository, verification date, and evidence paths. Roo Code remains registered but automated invocation is disabled because no stable headless CLI was verified. Agents execute only after deterministic CI finds a candidate-only failure and their output is labeled `ANALYSIS`.
 
 See [`docs/harness-adapters.md`](docs/harness-adapters.md).
 
@@ -177,41 +138,15 @@ downstreamci capabilities codex
 
 ## GitHub App and distributed workers
 
-`apps/github-app` verifies GitHub webhooks, creates a queued `DownstreamCI / compatibility` Check Run, and persists an execution job. Authenticated workers claim leased jobs, check out the PR on the trusted host, execute the same deterministic core pipeline, and return comparisons. The coordinator then updates the original Check Run and persists history.
+`apps/github-app` verifies GitHub webhooks, records candidate head repository/SHA plus trusted base SHA, creates a queued `DownstreamCI / compatibility` Check Run, and persists an execution job. Workers load policy from the base revision, heartbeat renewable leases, execute the same deterministic core pipeline, and can complete only while still owning the live lease.
 
-GitHub installation credentials remain in the coordinator. A worker may receive a separately scoped **read-only** clone credential on the host; downstream containers receive neither GitHub credentials nor the Docker socket.
+GitHub installation credentials remain in the coordinator. A worker may receive a separately scoped **read-only** clone credential on the host; downstream containers receive neither GitHub credentials nor the Docker socket. The direct worker execution API is separately bearer-authenticated and fails closed when its token is absent.
 
-Run history uses SQLite locally and PostgreSQL when `DOWNSTREAMCI_DATABASE_URL` or `DATABASE_URL` is configured. Queue state is local SQLite in the coordinator deployment. See [`docs/github-app.md`](docs/github-app.md) and [`docs/self-hosting.md`](docs/self-hosting.md).
+Run history uses SQLite locally and PostgreSQL when `DOWNSTREAMCI_DATABASE_URL` or `DATABASE_URL` is configured. See [`docs/github-app.md`](docs/github-app.md), [`docs/security.md`](docs/security.md), and [`docs/self-hosting.md`](docs/self-hosting.md).
 
 ## Evidence and dashboard
 
 Local runs write sanitized/checksummed evidence under `.downstreamci/artifacts/<run-id>/` and persist comparison history in `.downstreamci/downstreamci.db`. The dashboard shows the baseline/candidate matrix, failures, logs, agent analysis, runtime metadata, artifacts, failure clusters, and historical high-signal/flaky downstream data.
-
-GitHub Checks include counts, baseline/candidate outcomes, confidence, cluster/signature data, environment metadata, available artifact references, bounded sanitized logs, and optional `ANALYSIS` output.
-
-## Security model
-
-Downstream repositories are untrusted code. Generic execution containers receive no GitHub write token, SSH key, production credential, host Docker socket, or implicit secret. Candidate source is mounted read-only. Environment values are explicitly selected. Network access is disabled unless a downstream opts in. Common credential forms are redacted again before evidence publication.
-
-Service containers are also capability-dropped and resource-bounded. Their image selection and any explicit environment values are part of maintainer-reviewed configuration.
-
-Read [`SECURITY.md`](SECURITY.md) and [`docs/security.md`](docs/security.md) before running third-party code.
-
-## Repository layout
-
-```text
-apps/
-  cli/          local operator UX
-  github-app/   webhook intake, durable queue, Checks API, run/signal API
-  dashboard/    compatibility/history UI
-  worker/       confined execution API and coordinator polling worker
-packages/
-  core/         config, classifier, runner, sandbox, adapters, storage, reporting, harnesses
-containers/
-  runner/       reviewed multi-ecosystem execution image
-fixtures/       deterministic compatibility cases
-docs/           architecture/security/ecosystem/harness/GitHub/self-hosting documentation
-```
 
 ## Development
 

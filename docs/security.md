@@ -2,46 +2,34 @@
 
 A downstream repository can execute arbitrary code. Treat it as hostile.
 
+## Trusted policy for pull requests
+
+Both supported GitHub PR integrations separate candidate source from execution policy:
+
+- the GitHub App worker checks out candidate code from the PR head repository/SHA and loads `.downstreamci.yml` from the signed webhook's base SHA;
+- the composite GitHub Action automatically reads the config from `github.event.pull_request.base.sha` and refuses `pull_request_target`.
+
+This prevents an unreviewed PR from granting itself network access, replacing the approved downstream set, raising resource limits, or changing execution commands. A first-time policy must be reviewed/merged before it governs automated PR testing.
+
 ## Default controls
 
-The Docker runner uses:
-
-- disposable baseline and candidate workspaces
-- a read-only container root filesystem
-- writable workspace plus isolated `/tmp` tmpfs
-- `--cap-drop=ALL`
-- `no-new-privileges`
-- PID, CPU, memory, and wall-clock limits with hard maxima
-- network `none` by default
-- explicit environment-variable injection only
-- environment values omitted from command evidence
-- bounded stdout/stderr capture
-- no host Docker socket mount
-- candidate source mounted read-only at `/candidate`
+The Docker runner uses disposable baseline/candidate workspaces, a read-only root filesystem, writable workspace plus isolated `/tmp`, `--cap-drop=ALL`, `no-new-privileges`, bounded PID/CPU/memory/time, network `none` by default, explicit environment injection, bounded logs, no host Docker socket, and a read-only `/candidate` mount.
 
 Worker-side defense in depth clamps programmatic execution requests to at most 16 CPUs, 32 GiB RAM, 4,096 PIDs, and two hours per command. Configuration validation applies the same ceilings. Service sidecars are limited to eight per downstream, 8 GiB RAM and 1,024 PIDs each, with health waits capped at five minutes.
-
-The source workspace is writable because build systems require it. The worker host must therefore treat the workspace as disposable and keep credentials outside it.
 
 ## Worker API
 
 The direct worker execution endpoint `POST /v1/execute` is disabled unless `DOWNSTREAMCI_WORKER_TOKEN` is configured and requires `Authorization: Bearer <token>` on every request. Token comparison is constant-time. The direct API accepts only Docker network modes `none` and `bridge`; arbitrary existing Docker network names are rejected. `/healthz` remains unauthenticated for orchestration probes.
 
-Do not expose the direct worker port to the public internet. Place it on a private network/firewall segment even when bearer authentication is enabled. `DOWNSTREAMCI_INTERNAL_TOKEN` is separately used for worker-to-coordinator queue traffic and should not be reused as the direct execution token.
+Keep the worker service on a private network/firewall segment even when bearer authentication is enabled. `DOWNSTREAMCI_INTERNAL_TOKEN` is separately used for worker-to-coordinator queue traffic and should not be reused as the direct execution token.
 
-## Host-side Git
+## Host-side Git and secrets
 
-Downstream checkout disables system/global Git configuration and terminal credential prompts by using an isolated HOME and `GIT_CONFIG_NOSYSTEM=1`. This reduces exposure to host-configured filters/helpers while fetching public OSS revisions.
-
-Distributed PR execution separates candidate code from execution policy. Candidate source comes from the PR head repository/SHA, while `.downstreamci.yml` is loaded from the trusted base SHA. PR authors therefore cannot change network/resource/downstream policy for the same unreviewed run.
+Git checkout uses an isolated HOME, disables system Git configuration and terminal credential prompts, and keeps optional read credentials in a temporary `.netrc`. Do not put GitHub App private keys, GitHub write tokens, SSH agents, package-publish tokens, cloud credentials, or production secrets into generic downstream environments. Check-output redaction is defense in depth, not permission to inject secrets.
 
 ## Network
 
-Dependency installation and tests often need different policies. The current config exposes `none` and Docker `bridge`. Keep `none` unless an approved downstream requires package/network access. A production worker can replace bridge egress with an allow-listed proxy without changing the comparison contract.
-
-## Secrets
-
-Do not put GitHub App private keys, GitHub write tokens, SSH agents, package-publish tokens, cloud credentials, or production secrets into generic downstream environments. Check output applies best-effort redaction for common token forms, but redaction is defense in depth—not permission to inject secrets.
+Dependency installation and tests often need different policies. Keep `network: none` unless an approved downstream needs package/network access. `bridge` egress is explicit and comes from trusted policy. A production worker can replace bridge egress with an allow-listed proxy without changing the comparison contract.
 
 ## Docker-in-Docker
 
