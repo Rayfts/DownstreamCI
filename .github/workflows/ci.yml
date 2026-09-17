@@ -48,4 +48,4 @@ jobs:
       - run: pnpm install --no-frozen-lockfile
       - run: pnpm audit --prod --audit-level high
       - name: Ensure no obvious private keys are committed
-        run: '! grep -R --exclude-dir=.git --exclude=ci.yml -E "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY" .'
+        run: '! grep -R --binary-files=without-match --exclude-dir=.git --exclude-dir=node_modules --exclude=ci.yml -E "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY" .'
