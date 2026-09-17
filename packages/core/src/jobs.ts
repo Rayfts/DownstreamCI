@@ -1,0 +1,216 @@
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import Database from "better-sqlite3";
+
+export type CoordinatorJobStatus = "queued" | "running" | "completed" | "failed";
+
+export interface CoordinatorJobInput {
+  id: string;
+  owner: string;
+  repo: string;
+  headRepository: string;
+  headSha: string;
+  baseSha: string;
+  pullNumber: number;
+  installationId: number;
+  checkRunId: number;
+}
+
+export interface CoordinatorJob extends Omit<CoordinatorJobInput, "headRepository" | "baseSha"> {
+  headRepository?: string;
+  baseSha?: string;
+  status: CoordinatorJobStatus;
+  createdAt: number;
+  updatedAt: number;
+  workerId?: string;
+  leaseUntil?: number;
+}
+
+interface JobRow {
+  id: string;
+  owner: string;
+  repo: string;
+  head_repository: string | null;
+  head_sha: string;
+  base_sha: string | null;
+  pull_number: number;
+  installation_id: number;
+  check_run_id: number;
+  status: CoordinatorJobStatus;
+  created_at: number;
+  updated_at: number;
+  worker_id: string | null;
+  lease_until: number | null;
+}
+
+export class CoordinatorJobStore {
+  private readonly sqlite: Database.Database;
+
+  constructor(path = ".downstreamci/downstreamci.db") {
+    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+    this.sqlite = new Database(path);
+    this.sqlite.pragma("journal_mode = WAL");
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS coordinator_jobs (
+        id TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        head_repository TEXT,
+        head_sha TEXT NOT NULL,
+        base_sha TEXT,
+        pull_number INTEGER NOT NULL,
+        installation_id INTEGER NOT NULL,
+        check_run_id INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        worker_id TEXT,
+        lease_until INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS coordinator_jobs_claim_idx
+        ON coordinator_jobs(status, lease_until, created_at);
+    `);
+    this.ensureColumn("head_repository", "TEXT");
+    this.ensureColumn("base_sha", "TEXT");
+  }
+
+  enqueue(input: CoordinatorJobInput): CoordinatorJob {
+    const now = Date.now();
+    this.sqlite
+      .prepare(`
+        INSERT INTO coordinator_jobs (
+          id, owner, repo, head_repository, head_sha, base_sha, pull_number,
+          installation_id, check_run_id, status, created_at, updated_at, worker_id, lease_until
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, NULL, NULL)
+      `)
+      .run(
+        input.id,
+        input.owner,
+        input.repo,
+        input.headRepository,
+        input.headSha,
+        input.baseSha,
+        input.pullNumber,
+        input.installationId,
+        input.checkRunId,
+        now,
+        now,
+      );
+    const job = this.get(input.id);
+    if (!job) throw new Error(`Unable to read queued job ${input.id}`);
+    return job;
+  }
+
+  get(id: string): CoordinatorJob | null {
+    const row = this.sqlite.prepare("SELECT * FROM coordinator_jobs WHERE id = ?").get(id) as JobRow | undefined;
+    return row ? fromRow(row) : null;
+  }
+
+  claim(workerId: string, leaseSeconds = 900): CoordinatorJob | null {
+    const transaction = this.sqlite.transaction(() => {
+      const now = Date.now();
+      const row = this.sqlite
+        .prepare(`
+          SELECT * FROM coordinator_jobs
+          WHERE status = 'queued'
+             OR (status = 'running' AND lease_until IS NOT NULL AND lease_until < ?)
+          ORDER BY created_at ASC
+          LIMIT 1
+        `)
+        .get(now) as JobRow | undefined;
+      if (!row) return null;
+      const leaseUntil = now + boundedLeaseSeconds(leaseSeconds) * 1000;
+      this.sqlite
+        .prepare(`
+          UPDATE coordinator_jobs
+          SET status = 'running', worker_id = ?, lease_until = ?, updated_at = ?
+          WHERE id = ?
+        `)
+        .run(workerId, leaseUntil, now, row.id);
+      return this.get(row.id);
+    });
+    return transaction.immediate();
+  }
+
+  renew(id: string, workerId: string, leaseSeconds = 900): CoordinatorJob | null {
+    const now = Date.now();
+    const leaseUntil = now + boundedLeaseSeconds(leaseSeconds) * 1000;
+    const result = this.sqlite
+      .prepare(`
+        UPDATE coordinator_jobs
+        SET lease_until = ?, updated_at = ?
+        WHERE id = ?
+          AND status = 'running'
+          AND worker_id = ?
+          AND lease_until IS NOT NULL
+          AND lease_until >= ?
+      `)
+      .run(leaseUntil, now, id, workerId, now);
+    return result.changes === 1 ? this.get(id) : null;
+  }
+
+  finishClaimed(
+    id: string,
+    workerId: string,
+    status: Extract<CoordinatorJobStatus, "completed" | "failed">,
+  ): CoordinatorJob | null {
+    const now = Date.now();
+    const result = this.sqlite
+      .prepare(`
+        UPDATE coordinator_jobs
+        SET status = ?, worker_id = NULL, lease_until = NULL, updated_at = ?
+        WHERE id = ?
+          AND status = 'running'
+          AND worker_id = ?
+          AND lease_until IS NOT NULL
+          AND lease_until >= ?
+      `)
+      .run(status, now, id, workerId, now);
+    return result.changes === 1 ? this.get(id) : null;
+  }
+
+  finish(id: string, status: Extract<CoordinatorJobStatus, "completed" | "failed">): CoordinatorJob | null {
+    this.sqlite
+      .prepare(`
+        UPDATE coordinator_jobs
+        SET status = ?, worker_id = NULL, lease_until = NULL, updated_at = ?
+        WHERE id = ?
+      `)
+      .run(status, Date.now(), id);
+    return this.get(id);
+  }
+
+  close(): void {
+    this.sqlite.close();
+  }
+
+  private ensureColumn(name: "head_repository" | "base_sha", type: "TEXT"): void {
+    const columns = this.sqlite.prepare("PRAGMA table_info(coordinator_jobs)").all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === name)) {
+      this.sqlite.exec(`ALTER TABLE coordinator_jobs ADD COLUMN ${name} ${type}`);
+    }
+  }
+}
+
+function boundedLeaseSeconds(value: number): number {
+  return Math.max(60, Math.min(3600, Math.trunc(value)));
+}
+
+function fromRow(row: JobRow): CoordinatorJob {
+  return {
+    id: row.id,
+    owner: row.owner,
+    repo: row.repo,
+    ...(row.head_repository ? { headRepository: row.head_repository } : {}),
+    headSha: row.head_sha,
+    ...(row.base_sha ? { baseSha: row.base_sha } : {}),
+    pullNumber: row.pull_number,
+    installationId: row.installation_id,
+    checkRunId: row.check_run_id,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(row.worker_id ? { workerId: row.worker_id } : {}),
+    ...(row.lease_until === null ? {} : { leaseUntil: row.lease_until }),
+  };
+}

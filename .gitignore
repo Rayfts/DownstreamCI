@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+.downstreamci/
+*.db
+*.db-shm
+*.db-wal
+.env
+.DS_Store

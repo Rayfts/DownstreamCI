@@ -1,0 +1,7 @@
+[package]
+name = "fixture-rust-downstream"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fixture-rust-lib = { path = "../upstream-lib" }

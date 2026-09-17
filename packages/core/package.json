@@ -1,0 +1,24 @@
+{
+  "name": "@downstreamci/core",
+  "version": "0.1.0",
+  "description": "Deterministic baseline-versus-candidate reverse-dependency CI core",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.2.0",
+    "drizzle-orm": "^0.45.2",
+    "postgres": "^3.4.9",
+    "yaml": "^2.8.1",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13"
+  }
+}

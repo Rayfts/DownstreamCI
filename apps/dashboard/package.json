@@ -1,0 +1,11 @@
+{
+  "name": "@downstreamci/dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "React dashboard for DownstreamCI compatibility evidence and history",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {"build": "vite build", "typecheck": "tsc -p tsconfig.json --noEmit", "test": "vitest run --passWithNoTests"},
+  "dependencies": {"react": "^19.1.1", "react-dom": "^19.1.1"},
+  "devDependencies": {"@types/react": "^19.1.12", "@types/react-dom": "^19.1.9", "@vitejs/plugin-react": "^5.0.2", "vite": "^7.1.5"}
+}

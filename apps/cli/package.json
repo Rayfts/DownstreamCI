@@ -1,0 +1,14 @@
+{
+  "name": "@downstreamci/cli",
+  "version": "0.1.0",
+  "description": "Local-first CLI for deterministic reverse-dependency compatibility testing",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {"downstreamci": "./dist/index.js"},
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {"@downstreamci/core": "workspace:*", "commander": "^14.0.0"}
+}

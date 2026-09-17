@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, "build/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: corepack enable
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm fixtures:test
+      - run: pnpm lint
+      - run: pnpm build
+
+  runner-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm --filter @downstreamci/core build
+      - run: docker build -t downstreamci/runner:ci containers/runner
+      - run: docker run --rm downstreamci/runner:ci node --version
+      - run: docker run --rm downstreamci/runner:ci npm --version
+      - run: docker run --rm downstreamci/runner:ci pnpm --version
+      - run: docker run --rm downstreamci/runner:ci yarn --version
+      - run: docker run --rm downstreamci/runner:ci python --version
+      - run: docker run --rm downstreamci/runner:ci uv --version
+      - run: docker run --rm downstreamci/runner:ci poetry --version
+      - run: docker run --rm downstreamci/runner:ci cargo --version
+      - run: docker run --rm downstreamci/runner:ci go version
+      - name: Run real Docker baseline/candidate integration
+        run: node scripts/docker-integration.mjs
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: downstreamci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d downstreamci"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DOWNSTREAMCI_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/downstreamci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm --filter @downstreamci/core exec vitest run test/storage-postgres.test.ts
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm audit --prod --audit-level high
+      - name: Ensure no obvious private keys are committed
+        run: '! grep -R --binary-files=without-match --exclude-dir=.git --exclude-dir=node_modules --exclude=ci.yml -E "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY" .'
