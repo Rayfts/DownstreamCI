@@ -38,8 +38,11 @@ export function githubCheckOutput(comparisons: Comparison[]): { title: string; s
           [
             `### Regression ${index + 1}${item.downstream ? ` — ${item.downstream.repository}` : ""}`,
             item.downstream ? `Downstream ref: \`${item.downstream.ref}\`` : "",
+            item.confidence === undefined ? "" : `Confidence: ${Math.round(item.confidence * 100)}%`,
             item.reason,
             item.candidateSignature ? `Signature: \`${item.candidateSignature}\`` : "",
+            item.cluster ? `Cluster: \`${item.cluster.id}\` — ${item.cluster.label}` : "",
+            item.artifacts?.length ? `Evidence artifacts: ${item.artifacts.length}` : "",
             item.analysis ? `**ANALYSIS (${item.analysis.harness})**\n\n${sanitizeLog(item.analysis.raw, 4_000)}` : "",
             "<details><summary>Baseline log excerpt</summary>",
             "",

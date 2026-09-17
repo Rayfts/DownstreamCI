@@ -9,6 +9,7 @@ import {
   RunStore,
   analyzeFailure,
   cloneDownstream,
+  clusterComparisons,
   detectEcosystem,
   ecosystemAdapter,
   getHarness,
@@ -17,6 +18,7 @@ import {
   runComparison,
   runProcess,
   summarizeComparisons,
+  writeRunArtifacts,
   type CandidateArtifact,
   type Comparison,
   type DownstreamConfig,
@@ -78,23 +80,30 @@ program
         }
       }
       comparisons.push(comparison);
-      if (!options.json) printComparison(comparison);
     }
 
     const runId = randomUUID();
+    const clustered = clusterComparisons(comparisons);
+    const finalComparisons = await writeRunArtifacts(
+      resolve(upstream, ".downstreamci/artifacts"),
+      runId,
+      clustered,
+    );
     const store = new RunStore(resolve(upstream, ".downstreamci/downstreamci.db"));
     try {
-      store.save(runId, upstream, await currentRef(upstream), comparisons);
+      store.save(runId, upstream, await currentRef(upstream), finalComparisons);
     } finally {
       store.close();
     }
 
-    const summary = summarizeComparisons(comparisons);
+    const summary = summarizeComparisons(finalComparisons);
     if (options.json) {
-      console.log(JSON.stringify({ runId, summary, comparisons }, null, 2));
+      console.log(JSON.stringify({ runId, summary, comparisons: finalComparisons }, null, 2));
     } else {
+      for (const comparison of finalComparisons) printComparison(comparison);
       console.log(`\nRun ${runId}`);
       console.log(`${summary.title}: ${summary.summary || "no downstreams"}`);
+      console.log(`Evidence: ${resolve(upstream, ".downstreamci/artifacts", runId)}`);
     }
     if ((summary.counts["newly-broken"] ?? 0) > 0) process.exitCode = 2;
   });
@@ -189,6 +198,20 @@ program.command("compare").argument("<run-id>").option("--path <path>", "upstrea
 );
 
 program
+  .command("signals")
+  .description("summarize repeated regressions, flaky downstreams, clusters, ecosystems, and runtimes")
+  .option("--path <path>", "upstream repository", ".")
+  .option("--limit <count>", "recent runs to inspect", parsePositiveInt, 100)
+  .action((options: { path: string; limit: number }) => {
+    const store = new RunStore(resolve(options.path, ".downstreamci/downstreamci.db"));
+    try {
+      console.log(JSON.stringify(store.signals(options.limit), null, 2));
+    } finally {
+      store.close();
+    }
+  });
+
+program
   .command("discover")
   .argument("[path]", "upstream repository", ".")
   .description("suggest downstream repositories using GitHub code search")
@@ -265,7 +288,7 @@ async function discoverOnGitHub(candidate: CandidateArtifact, limit: number): Pr
 
 function parsePositiveInt(value: string): number {
   const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 10) throw new Error("retries must be an integer from 1 to 10");
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) throw new Error("value must be an integer from 1 to 100");
   return parsed;
 }
 
@@ -320,7 +343,9 @@ function combinedLog(result: { stderr: string; stdout: string }): string {
 
 function printComparison(comparison: Comparison): void {
   const name = comparison.downstream?.repository ?? "downstream";
-  console.log(`${comparison.classification.padEnd(23)} ${name}`);
+  const confidence = comparison.confidence === undefined ? "" : ` ${(comparison.confidence * 100).toFixed(0)}%`;
+  const cluster = comparison.cluster ? ` ${comparison.cluster.id}` : "";
+  console.log(`${comparison.classification.padEnd(23)} ${name}${confidence}${cluster}`);
   if (comparison.analysis) {
     console.log(`  ANALYSIS (${comparison.analysis.harness}): ${comparison.analysis.raw.slice(0, 500)}`);
   }

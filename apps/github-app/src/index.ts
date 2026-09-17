@@ -1,7 +1,13 @@
 import { createHmac, createSign, timingSafeEqual } from "node:crypto";
 import { resolve } from "node:path";
 import { Octokit } from "@octokit/rest";
-import { RunStore, githubCheckOutput, summarizeComparisons, type Comparison } from "@downstreamci/core";
+import {
+  PostgresRunStore,
+  RunStore,
+  githubCheckOutput,
+  summarizeComparisons,
+  type Comparison,
+} from "@downstreamci/core";
 import Fastify from "fastify";
 
 interface JsonEnvelope<T> {
@@ -14,6 +20,9 @@ interface CheckRequest {
   repo: string;
   headSha: string;
   installationId?: number;
+  runId?: string;
+  upstream?: string;
+  ref?: string;
   comparisons: Comparison[];
 }
 
@@ -23,6 +32,8 @@ interface PullRequestWebhook {
   repository?: { name?: string; owner?: { login?: string } };
   pull_request?: { number?: number; head?: { sha?: string } };
 }
+
+type AnyRunStore = RunStore | PostgresRunStore;
 
 export function createServer() {
   const app = Fastify({ logger: true, bodyLimit: 2_000_000 });
@@ -38,13 +49,13 @@ export function createServer() {
   app.get("/healthz", async () => ({ ok: true }));
 
   app.get<{ Querystring: { limit?: string } }>("/api/runs/latest", async (request) => {
-    const store = new RunStore(resolve(process.env.DOWNSTREAMCI_DB ?? ".downstreamci/downstreamci.db"));
-    try {
-      const limit = Number.parseInt(request.query.limit ?? "20", 10);
-      return { runs: store.latest(Number.isFinite(limit) ? limit : 20) };
-    } finally {
-      store.close();
-    }
+    const limit = parseLimit(request.query.limit, 20);
+    return { runs: await withRunStore((store) => store.latest(limit)) };
+  });
+
+  app.get<{ Querystring: { limit?: string } }>("/api/signals", async (request) => {
+    const limit = parseLimit(request.query.limit, 100);
+    return { signals: await withRunStore((store) => store.signals(limit)) };
   });
 
   app.post<{ Body: JsonEnvelope<CheckRequest> }>("/internal/checks", async (request, reply) => {
@@ -61,6 +72,9 @@ export function createServer() {
       conclusion: summary.conclusion,
       output,
     });
+    if (body.runId && body.upstream && body.ref) {
+      await withRunStore((store) => store.save(body.runId as string, body.upstream as string, body.ref as string, body.comparisons));
+    }
     return reply.send({ ok: true, conclusion: summary.conclusion });
   });
 
@@ -82,14 +96,47 @@ export function createServer() {
       return reply.code(400).send({ error: "incomplete pull_request webhook payload" });
     }
 
+    const octokit = await installationClient(installationId);
+    const check = await octokit.checks.create({
+      owner,
+      repo,
+      name: "DownstreamCI / compatibility",
+      head_sha: headSha,
+      status: "queued",
+      output: {
+        title: "Queued for downstream compatibility testing",
+        summary: `Pull request #${pullNumber} will be compared against approved downstream projects.`,
+      },
+    });
+
     return reply.code(202).send({
       accepted: true,
-      trigger: { owner, repo, headSha, pullNumber, installationId },
-      note: "A coordinator should enqueue this normalized trigger; GitHub credentials remain outside untrusted workers.",
+      trigger: { owner, repo, headSha, pullNumber, installationId, checkRunId: check.data.id },
     });
   });
 
   return app;
+}
+
+function createRunStore(): AnyRunStore {
+  const databaseUrl = process.env.DOWNSTREAMCI_DATABASE_URL ?? process.env.DATABASE_URL;
+  if (databaseUrl) return new PostgresRunStore(databaseUrl);
+  return new RunStore(resolve(process.env.DOWNSTREAMCI_DB ?? ".downstreamci/downstreamci.db"));
+}
+
+async function withRunStore<T>(work: (store: AnyRunStore) => T | Promise<T>): Promise<T> {
+  const store = createRunStore();
+  try {
+    return await work(store);
+  } finally {
+    await store.close();
+  }
+}
+
+function parseLimit(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? String(fallback), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.min(100, parsed));
 }
 
 async function installationClient(installationId?: number): Promise<Octokit> {
