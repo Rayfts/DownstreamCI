@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compareExecutions } from "./compare.js";
+import { applyExpectedFlakePolicy } from "./flakes.js";
 import { runProcess } from "./process.js";
 import type { Comparison, DownstreamSpec, Execution } from "./types.js";
 
@@ -63,8 +64,9 @@ export async function runComparison(spec: DownstreamSpec, runner: PairRunner): P
     const candidateWorkspace = await cloneDownstream(spec, temp, "candidate");
     const baseline = await runner.runBaseline(baselineWorkspace, spec);
     const candidate = await runner.runCandidate(candidateWorkspace, spec);
+    const comparison = applyExpectedFlakePolicy(compareExecutions(baseline, candidate), spec);
     return {
-      ...compareExecutions(baseline, candidate),
+      ...comparison,
       downstream: {
         repository: spec.repository,
         ref: spec.ref,

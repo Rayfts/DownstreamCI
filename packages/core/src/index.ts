@@ -3,6 +3,8 @@ export * from "./config.js";
 export * from "./compare.js";
 export * from "./signatures.js";
 export * from "./clustering.js";
+export * from "./flakes.js";
+export * from "./discovery.js";
 export * from "./artifacts.js";
 export * from "./process.js";
 export * from "./sandbox.js";

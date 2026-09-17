@@ -56,6 +56,7 @@ export interface Comparison {
   confidence?: number;
   cluster?: FailureCluster;
   artifacts?: ArtifactReference[];
+  expectedFlakeMatch?: string;
   baseline: Execution;
   candidate: Execution;
   baselineSignature?: string;
