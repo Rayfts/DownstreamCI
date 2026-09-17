@@ -1,6 +1,6 @@
 import { chmod, copyFile, lstat, mkdir, mkdtemp, readlink, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { runProcess } from "./process.js";
 
 export interface CandidateSnapshot {
@@ -63,11 +63,13 @@ export async function createCandidateSnapshot(source: string): Promise<Candidate
 }
 
 function assertTrackedPath(relativePath: string): void {
+  const segments = relativePath.split(/[\\/]/u);
   if (
     relativePath.length === 0 ||
-    relativePath.startsWith(`..${sep}`) ||
-    relativePath === ".." ||
+    segments.includes("..") ||
     relativePath.startsWith("/") ||
+    relativePath.startsWith("\\") ||
+    /^[A-Za-z]:[\\/]/u.test(relativePath) ||
     relativePath.includes("\0")
   ) {
     throw new Error(`Unsafe tracked candidate path: ${relativePath}`);
