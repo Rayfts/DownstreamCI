@@ -10,6 +10,7 @@ describe("coding-agent harness contracts", () => {
       expect(harness.evidence.length).toBeGreaterThan(0);
       expect(harness.upstream).toMatch(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/);
     }
+    expect(getHarness("pi").upstream).toBe("mitsuhiko/pi-mono");
   });
 
   it("uses canonical machine-friendly invocations without fabricating Roo headless support", () => {
@@ -21,6 +22,12 @@ describe("coding-agent harness contracts", () => {
     });
     expect(getHarness("pi").buildInvocation(prompt)?.args).toEqual(["--mode", "json", "-p", prompt]);
     expect(getHarness("gemini").buildInvocation(prompt)?.args).toEqual(["-p", prompt, "--output-format", "stream-json"]);
+    expect(getHarness("goose").buildInvocation(prompt)).toEqual({
+      command: "goose",
+      args: ["run", "--output-format", "stream-json", "--no-session", "--text", prompt],
+      output: "jsonl",
+    });
+    expect(getHarness("goose").structuredOutput).toBe(true);
     expect(getHarness("cline").buildInvocation(prompt)?.args).toContain("false");
     expect(getHarness("continue").buildInvocation(prompt)?.args).toEqual(["-p", prompt, "--format", "json"]);
     expect(getHarness("roo-code").automated).toBe(false);

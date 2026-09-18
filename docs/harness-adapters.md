@@ -2,18 +2,18 @@
 
 Harnesses receive evidence only after deterministic comparison has identified a candidate-only failure. Their output is labeled `ANALYSIS` and cannot decide CI pass/fail.
 
-The capability registry was re-verified against the listed public upstream repositories on **2026-09-17**. Each capability record includes the upstream repository and concrete evidence paths so invocation drift is reviewable.
+The capability registry was initially verified against the listed public upstream repositories on **2026-09-17**. Pi, Goose, and Cline provenance was re-checked on **2026-09-18** during an OSS-readiness audit. Each capability record includes the upstream repository and concrete evidence paths so invocation drift is reviewable.
 
 | Harness | Upstream | Verified automated mode | Evidence in upstream |
 |---|---|---|---|
 | Codex | `openai/codex` | `codex exec --json` JSONL | `codex-rs/exec/src/cli.rs` |
 | Claude Code | `anthropics/claude-code` | `--print --output-format stream-json` | `plugins/security-guidance/hooks/llm.py`, `feed.xml` |
 | OpenCode | `anomalyco/opencode` | `opencode run --format json` | `packages/opencode/src/cli/cmd/run.ts` |
-| Pi | `earendil-works/pi` | `pi --mode json -p` | `packages/coding-agent/docs/usage.md` |
+| Pi | `mitsuhiko/pi-mono` | `pi --mode json -p` | `packages/coding-agent/docs/usage.md`, `packages/coding-agent/docs/rpc.md` |
 | Gemini CLI | `google-gemini/gemini-cli` | `-p` with `--output-format stream-json` | `README.md`, `docs/changelogs/index.md`, CLI config source |
 | Aider | `Aider-AI/aider` | `--message ... --yes --no-auto-commits` | `aider/website/docs/scripting.md` |
-| Goose | `aaif-goose/goose` | `goose run --text` | headless/goose-in-docker tutorials |
-| Cline | `cline/cline` | headless `--json`; auto-approval explicitly false | `docs/usage/cli-overview.mdx`, `apps/cli/src/main.ts` |
+| Goose | `aaif-goose/goose` | `goose run --output-format stream-json --no-session --text ...` | `documentation/docs/guides/running-tasks.md` |
+| Cline | `cline/cline` | headless `--json`; auto-approval explicitly false | `apps/cli/README.md`, `apps/cli/src/main.ts` |
 | Roo Code | `RooCodeInc/Roo-Code` | **disabled** — no verified stable headless CLI | reviewed repository README/package surfaces |
 | Continue | `continuedev/continue` | `cn -p ... --format json` | `docs/cli/headless-mode.mdx`, `extensions/cli/src/index.ts` |
 
