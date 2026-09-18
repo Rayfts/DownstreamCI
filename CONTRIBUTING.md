@@ -1,20 +1,46 @@
-# Contributing
+# Contributing to DownstreamCI
 
-Thank you for improving DownstreamCI.
+Thanks for helping improve DownstreamCI. Contributions are welcome across the deterministic comparison engine, ecosystem adapters, sandboxing, GitHub integration, workers, dashboard, harness analysis, fixtures, and documentation.
 
-## Development
+The core invariant is: **baseline and candidate execution determine compatibility; AI analysis never changes the verdict.**
 
-Use Node 22+ and pnpm via Corepack.
+## Development setup
+
+Use the repository's pnpm workspace:
 
 ```bash
 corepack enable
 pnpm install
-pnpm check
+pnpm typecheck
+pnpm test
+pnpm fixtures:test
+pnpm lint
 pnpm build
 ```
 
-Keep deterministic CI facts separate from coding-agent analysis. A harness adapter must cite a stable, public upstream mechanism in `docs/harness-adapters.md`; do not guess CLI flags.
+Build the reviewed runner image when changing execution behavior:
 
-When adding an ecosystem adapter, add a fixture where baseline passes and the candidate breaks, plus a fixture or test showing a pre-existing baseline failure is not reported as a regression.
+```bash
+pnpm runner:build
+```
 
-Security changes should preserve the rule that untrusted downstream code receives no GitHub write token, SSH key, host Docker socket, or production credential by default.
+## Design rules
+
+1. Baseline and candidate must use the same pinned downstream revision and equivalent test policy.
+2. A pre-existing downstream failure must never become `newly-broken`.
+3. Third-party repositories are untrusted code. Do not weaken container isolation or expose host credentials for convenience.
+4. GitHub/App credentials belong to the coordinator/host side and must not leak into downstream containers.
+5. Ecosystem adapters should use deterministic, reviewable candidate-injection mechanisms.
+6. Agent output is labeled analysis and cannot mutate deterministic classifications.
+7. Do not invent harness flags or capabilities; adapter claims require upstream source or official documentation.
+8. Add fixture coverage for new classification, ecosystem, sandbox, or clustering behavior.
+
+## Ecosystem adapters
+
+New ecosystems should implement the existing adapter boundary rather than special-casing the core comparison model. Document detection, candidate build/injection, dependency installation, test execution, cleanup, and known limitations.
+
+## Pull requests
+
+Keep PRs focused. Include tests/fixtures, describe security implications, and note any changes to configuration, evidence format, or compatibility classification. Changes to worker/coordinator trust boundaries deserve explicit threat-model reasoning.
+
+By contributing, you agree to follow `CODE_OF_CONDUCT.md` and the Apache-2.0 license terms.

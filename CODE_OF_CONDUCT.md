@@ -1,7 +1,25 @@
 # Code of Conduct
 
-We are committed to a professional, harassment-free open-source community.
+DownstreamCI is an open-source engineering project. We want collaboration to remain useful, respectful, and safe for everyone participating.
 
-Be respectful, critique ideas rather than people, avoid harassment or discrimination, and respect maintainer decisions made for project safety and scope. Maintainers may remove content or participation that undermines a safe and productive environment.
+## Expected behavior
 
-For serious conduct concerns, use a private contact channel associated with the repository rather than escalating publicly.
+- Discuss code, evidence, and ideas on their merits.
+- Give specific, actionable feedback and assume good faith where reasonable.
+- Respect different experience levels, backgrounds, and communication styles.
+- Keep technical disagreement focused on the work, not the person.
+- Protect private information, credentials, and security-sensitive details.
+
+## Unacceptable behavior
+
+Harassment, threats, discriminatory or sexualized language, doxxing, personal attacks, intimidation, deliberate disruption, or publishing another person's private information without permission are not acceptable.
+
+## Scope
+
+This policy applies to issues, pull requests, reviews, discussions, project-managed community spaces, and direct project interactions connected to DownstreamCI.
+
+## Enforcement
+
+Maintainers may edit or remove abusive content, close or lock threads, reject contributions, or restrict participation when behavior materially harms contributors or the project. Responses should be proportionate and focused on restoring productive participation.
+
+For concerns that should not be handled publicly, use a private repository contact mechanism when available. Do not place personal, confidential, or security-sensitive information in a public issue.

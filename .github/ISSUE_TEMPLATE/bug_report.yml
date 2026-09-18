@@ -1,0 +1,49 @@
+name: Bug report
+description: Report incorrect comparison, execution, or integration behavior
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: "Thanks for reporting a bug. Do not include secrets or vulnerability details here; see SECURITY.md."
+  - type: input
+    id: version
+    attributes:
+      label: DownstreamCI version or commit
+      placeholder: "v0.x.y or commit SHA"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the baseline/candidate behavior you observed and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Include sanitized config and the smallest upstream/downstream setup that reproduces the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node, pnpm, Docker, runner image, ecosystem/package manager, and deployment mode.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized baseline/candidate logs
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I removed credentials, private repository data, and other sensitive information.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
