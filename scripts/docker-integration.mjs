@@ -16,7 +16,7 @@ try {
   await mkdir(upstream, { recursive: true });
   await mkdir(baselineUpstream, { recursive: true });
 
-  await writeFile(join(upstream, "go.mod"), "module example.com/upstream\n\ngo 1.22\n");
+  await writeFile(join(upstream, "go.mod"), "module example.com/upstream\n\ngo 1.19\n");
   await writeFile(join(upstream, "upstream.go"), "package upstream\n\nfunc Value() int { return 2 }\n");
 
   await writeFile(
@@ -24,7 +24,7 @@ try {
     [
       "module example.com/downstream",
       "",
-      "go 1.22",
+      "go 1.19",
       "",
       "require example.com/upstream v0.0.0",
       "",
@@ -51,7 +51,7 @@ try {
       "",
     ].join("\n"),
   );
-  await writeFile(join(baselineUpstream, "go.mod"), "module example.com/upstream\n\ngo 1.22\n");
+  await writeFile(join(baselineUpstream, "go.mod"), "module example.com/upstream\n\ngo 1.19\n");
   await writeFile(join(baselineUpstream, "upstream.go"), "package upstream\n\nfunc Value() int { return 1 }\n");
 
   await git(downstream, ["init", "--quiet"]);
