@@ -9,10 +9,15 @@ export function applyExpectedFlakePolicy(comparison: Comparison, spec: Downstrea
   const match = patterns.find((pattern) => candidateLog.includes(pattern));
   if (!match) return comparison;
 
+  const confidence =
+    comparison.classification === "flaky"
+      ? comparison.confidence
+      : Math.min(comparison.confidence ?? 0.75, 0.75);
+
   return {
     ...comparison,
     classification: "flaky",
-    confidence: comparison.classification === "flaky" ? comparison.confidence : Math.min(comparison.confidence ?? 0.75, 0.75),
+    ...(confidence === undefined ? {} : { confidence }),
     expectedFlakeMatch: match,
     reason:
       comparison.classification === "flaky"
