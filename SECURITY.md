@@ -1,31 +1,23 @@
 # Security Policy
 
-DownstreamCI executes third-party source code and must be treated as a high-risk build system.
+DownstreamCI executes third-party downstream repositories and should be treated as security-sensitive CI infrastructure.
 
-## Reporting vulnerabilities
+## Reporting a vulnerability
 
-Do not publish exploitable sandbox escapes, credential leaks, token exposure, or command-injection details in a public issue. Use GitHub's private vulnerability reporting for this repository when available.
+Do not publish exploit details, credentials, sandbox escapes, token leaks, webhook bypasses, or worker/coordinator authentication weaknesses in a public issue.
 
-## Security invariants
+If GitHub private vulnerability reporting is enabled, use **Security → Report a vulnerability**. Otherwise, open a minimal non-sensitive issue requesting a private reporting channel.
 
-- Downstream code is untrusted.
-- Test containers never receive the host Docker socket.
-- GitHub write credentials, SSH keys, cloud credentials, and production secrets are absent by default.
-- Secret/environment injection must be explicit and scoped.
-- Host-side clone credentials must remain outside the test-container environment.
-- Worker filesystems/checkouts are disposable.
-- CPU, memory, PID, and wall-clock limits have mandatory defaults.
-- Network access defaults to disabled.
-- Candidate source is mounted read-only.
-- Candidate and baseline run under equivalent security policy.
-- Distributed PR policy is loaded from the trusted base SHA, not the unreviewed head.
-- Logs are bounded and sanitized before publication.
-- Internal coordinator endpoints require a high-entropy bearer token.
-- Direct worker execution requires a separate bearer token and fails closed when it is not configured.
-- Service containers have no host port mappings and are capability-dropped/resource-bounded by default.
+Include the affected commit/version, deployment mode, operating system/container runtime, minimal reproduction, impact, and whether the issue can access host data, GitHub credentials, worker secrets, other jobs, or the Docker socket.
 
-## Deployment guidance
+## Security boundaries
 
-Treat Docker daemon access on coordinator/worker hosts as privileged infrastructure. Do not expose the daemon socket to downstream containers. Restrict coordinator `/internal/*` to trusted workers/operators and rotate `DOWNSTREAMCI_INTERNAL_TOKEN` if it is exposed. Keep direct worker execution private and protect it with a distinct `DOWNSTREAMCI_WORKER_TOKEN`.
+- Downstream repositories are untrusted input and run in disposable containers.
+- Containers should not receive GitHub write credentials, SSH keys, host cloud credentials, or the Docker socket.
+- Network access is disabled by default and should be enabled only by reviewed policy.
+- Resource limits and timeouts must remain enforced even when callers bypass YAML parsing.
+- `pull_request_target` is not a safe substitute for trusted-base policy and is intentionally refused by the bundled Action.
+- Agent analysis is advisory and cannot alter deterministic baseline/candidate verdicts.
+- Coordinator/worker APIs must fail closed when required authentication is absent.
 
-For private repositories, use a separate least-privilege read credential for host-side Git checkout. Do not reuse the GitHub App private key or a write-capable installation token inside workers or downstreams.
+Security changes should include regression tests and, where relevant, updates to `docs/security.md` or the self-hosting documentation.

@@ -1,0 +1,34 @@
+name: Feature request
+description: Propose a compatibility, ecosystem, or workflow improvement
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What downstream-compatibility or maintainer problem are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the desired workflow, classification, ecosystem adapter, or deployment capability.
+    validations:
+      required: true
+  - type: textarea
+    id: deterministic
+    attributes:
+      label: Deterministic signal
+      description: How should DownstreamCI decide the result without relying on agent opinion?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I checked for an existing issue describing the same request.
+          required: true
