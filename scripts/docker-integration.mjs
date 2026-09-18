@@ -16,15 +16,20 @@ try {
   await mkdir(upstream, { recursive: true });
   await mkdir(baselineUpstream, { recursive: true });
 
-  await writeFile(join(upstream, "go.mod"), "module example.com/upstream\n\ngo 1.22\n");
+  await writeFile(join(upstream, "go.mod"), "module example.com/upstream\n\ngo 1.19\n");
   await writeFile(join(upstream, "upstream.go"), "package upstream\n\nfunc Value() int { return 2 }\n");
+  await git(upstream, ["init", "--quiet"]);
+  await git(upstream, ["config", "user.name", "DownstreamCI Fixture"]);
+  await git(upstream, ["config", "user.email", "fixture@downstreamci.invalid"]);
+  await git(upstream, ["add", "."]);
+  await git(upstream, ["commit", "--quiet", "-m", "candidate fixture"]);
 
   await writeFile(
     join(downstream, "go.mod"),
     [
       "module example.com/downstream",
       "",
-      "go 1.22",
+      "go 1.19",
       "",
       "require example.com/upstream v0.0.0",
       "",
@@ -51,7 +56,7 @@ try {
       "",
     ].join("\n"),
   );
-  await writeFile(join(baselineUpstream, "go.mod"), "module example.com/upstream\n\ngo 1.22\n");
+  await writeFile(join(baselineUpstream, "go.mod"), "module example.com/upstream\n\ngo 1.19\n");
   await writeFile(join(baselineUpstream, "upstream.go"), "package upstream\n\nfunc Value() int { return 1 }\n");
 
   await git(downstream, ["init", "--quiet"]);

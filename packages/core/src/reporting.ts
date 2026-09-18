@@ -86,6 +86,7 @@ export function githubCheckOutput(comparisons: Comparison[]): { title: string; s
 }
 
 export function sanitizeLog(value: string, maxChars = 8_000): string {
+  // biome-ignore lint/complexity/useRegexLiterals: the constructor keeps the ESC control character out of the regex literal.
   const ansiPattern = new RegExp("\\u001B\\[[0-?]*[ -/]*[@-~]", "g");
   const withoutAnsi = value.replace(ansiPattern, "");
   const redacted = withoutAnsi
