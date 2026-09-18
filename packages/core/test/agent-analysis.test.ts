@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildAgentEnvironment, buildAnalysisPrompt, buildSemanticClusterPrompt } from "../src/agent-analysis.js";
 import type { Comparison, Execution } from "../src/types.js";
@@ -61,13 +62,14 @@ describe("agent analysis prompts", () => {
     process.env.SAFE_AGENT_SETTING = "safe-value";
     process.env.DOWNSTREAMCI_AGENT_ENV_ALLOWLIST = "SAFE_AGENT_SETTING,GITHUB_TOKEN,AWS_SECRET_ACCESS_KEY";
 
-    const environment = buildAgentEnvironment("/tmp/downstreamci-analysis-test");
+    const root = "/tmp/downstreamci-analysis-test";
+    const environment = buildAgentEnvironment(root);
     expect(environment.OPENAI_API_KEY).toBe("model-key");
     expect(environment.SAFE_AGENT_SETTING).toBe("safe-value");
     expect(environment.GITHUB_TOKEN).toBeUndefined();
     expect(environment.DOWNSTREAMCI_GITHUB_READ_TOKEN).toBeUndefined();
     expect(environment.DOWNSTREAMCI_INTERNAL_TOKEN).toBeUndefined();
     expect(environment.AWS_SECRET_ACCESS_KEY).toBeUndefined();
-    expect(environment.HOME).toBe("/tmp/downstreamci-analysis-test/home");
+    expect(environment.HOME).toBe(join(root, "home"));
   });
 });
