@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { chmod, copyFile, lstat, mkdir, mkdtemp, readlink, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -31,7 +32,7 @@ export async function createCandidateSnapshot(source: string): Promise<Candidate
       assertTrackedPath(relativePath);
       const sourcePath = join(sourceRoot, relativePath);
       const targetPath = join(targetRoot, relativePath);
-      let stat;
+      let stat: Stats;
       try {
         stat = await lstat(sourcePath);
       } catch (error) {
