@@ -18,6 +18,11 @@ try {
 
   await writeFile(join(upstream, "go.mod"), "module example.com/upstream\n\ngo 1.19\n");
   await writeFile(join(upstream, "upstream.go"), "package upstream\n\nfunc Value() int { return 2 }\n");
+  await git(upstream, ["init", "--quiet"]);
+  await git(upstream, ["config", "user.name", "DownstreamCI Fixture"]);
+  await git(upstream, ["config", "user.email", "fixture@downstreamci.invalid"]);
+  await git(upstream, ["add", "."]);
+  await git(upstream, ["commit", "--quiet", "-m", "candidate fixture"]);
 
   await writeFile(
     join(downstream, "go.mod"),
