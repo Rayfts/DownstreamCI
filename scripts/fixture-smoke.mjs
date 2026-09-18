@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = resolve(new URL("..", import.meta.url).pathname);
+const root = fileURLToPath(new URL("..", import.meta.url));
 const temp = await mkdtemp(join(tmpdir(), "downstreamci-fixture-"));
 
 try {
@@ -52,7 +53,8 @@ async function exercise(name, candidateTarball) {
 
 function run(command, args, cwd) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"], shell: false });
+    const executable = process.platform === "win32" && command === "npm" ? "npm.cmd" : command;
+    const child = spawn(executable, args, { cwd, stdio: ["ignore", "pipe", "pipe"], shell: false });
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");
