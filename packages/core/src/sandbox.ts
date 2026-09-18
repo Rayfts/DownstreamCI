@@ -54,7 +54,7 @@ export async function runInDocker(spec: SandboxCommand): Promise<CommandResult> 
     "--network",
     spec.network ?? "none",
     "--tmpfs",
-    "/tmp:rw,nosuid,nodev,size=1g",
+    "/tmp:rw,nosuid,nodev,exec,size=1g",
     "--mount",
     mountArg({ source: spec.workspace, target: "/workspace" }),
     "--workdir",
