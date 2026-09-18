@@ -86,7 +86,7 @@ export function githubCheckOutput(comparisons: Comparison[]): { title: string; s
 }
 
 export function sanitizeLog(value: string, maxChars = 8_000): string {
-  const ansiPattern = new RegExp("\\u001B\\[[0-?]*[ -/]*[@-~]", "g");
+  const ansiPattern = /\u001B\[[0-?]*[ -\/]*[@-~]/g;
   const withoutAnsi = value.replace(ansiPattern, "");
   const redacted = withoutAnsi
     .replace(/\b(gh[pousr]_[A-Za-z0-9_]{20,})\b/g, "<redacted-github-token>")
